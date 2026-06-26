@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Repository Visualizer</title>
+	<meta name="description" content="Offline, self-contained repository file browser and folder/file spider graph. Runs from file:// with no server.">
+
+	<!-- Prevent a flash of the wrong theme before app.js runs. Inline, local-only. -->
+	<script>
+		(function () {
+			try {
+				var s = JSON.parse(localStorage.getItem("repo-visualizer:settings:v1") || "{}");
+				var t = s.theme || "auto";
+				if (t === "auto") t = (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+				document.documentElement.dataset.theme = t;
+			} catch (e) { document.documentElement.dataset.theme = "dark"; }
+		})();
+	</script>
+
+	<link rel="stylesheet" href="app.css">
+	<!-- Two vendored highlight.js themes; app.js enables exactly one for the active theme. -->
+	<link rel="stylesheet" href="vendor/hljs-github-dark.min.css" id="hljs-dark">
+	<link rel="stylesheet" href="vendor/hljs-github.min.css" id="hljs-light" disabled>
+</head>
+<body>
+	<div id="app">
+		<header class="topbar">
+			<div class="brand">⬡ Repository&nbsp;Visualizer</div>
+			<div class="spacer"></div>
+
+			<button class="btn" id="fit-graph" type="button" title="Fit the whole graph in view">Fit graph</button>
+			<button class="btn" id="graph-expand-all" type="button" title="Expand every folder node in the graph">Expand all</button>
+			<label class="toggle" title="Overlay import/include/require edges (reads file contents)">
+				<input type="checkbox" id="ref-overlay"> Ref&nbsp;overlay
+			</label>
+
+			<span class="tb-sep" aria-hidden="true"></span>
+
+			<label class="tb-field" title="Graph screenshot resolution">
+				<select id="shot-res" class="select" aria-label="Graph screenshot resolution">
+					<option value="current">Current size</option>
+					<option value="1280x720">1280 × 720</option>
+					<option value="1920x1080" selected>1920 × 1080</option>
+					<option value="2560x1440">2560 × 1440</option>
+					<option value="3840x2160">3840 × 2160 · 4K</option>
+					<option value="5120x2880">5120 × 2880 · 5K</option>
+					<option value="7680x4320">7680 × 4320 · 8K</option>
+					<option value="11520x6480">11520 × 6480 · 12K</option>
+					<option value="15360x8640">15360 × 8640 · 16K</option>
+				</select>
+			</label>
+			<button class="btn" id="btn-screenshot" type="button" title="Save the graph as a PNG at the selected resolution">Screenshot</button>
+
+			<span class="tb-sep" aria-hidden="true"></span>
+
+			<label class="toggle" title="Inline small text files into the snapshot">
+				<input type="checkbox" id="snapshot-inline"> Inline
+			</label>
+			<button class="btn" id="btn-snapshot" type="button">Export snapshot</button>
+			<button class="btn" id="btn-theme" type="button">Theme: auto</button>
+		</header>
+
+		<div id="vendor-warning" class="vendor-warning" hidden>
+			⚠ Some vendored libraries failed to load — running in degraded mode:
+			<span class="vw-list"></span>. See <code>vendor/README.md</code> to restore them.
+		</div>
+
+		<aside class="sidebar">
+			<div class="source">
+				<button class="btn primary" id="open-folder" type="button">Open Folder</button>
+				<button class="btn" id="open-fsaccess" type="button" hidden>Open Folder (persistent)</button>
+				<button class="btn" id="reopen-last" type="button" hidden>Reopen</button>
+				<!-- Tier 1, universal: directory picker. Works in Chrome, Edge, Firefox, Safari. -->
+				<input id="folder-input" type="file" webkitdirectory directory multiple hidden>
+				<div class="source-label muted" id="source-label">No folder opened</div>
+			</div>
+
+			<div class="filter-row">
+				<input id="filter" type="search" placeholder="Filter files…  (press /)" autocomplete="off" spellcheck="false" aria-label="Filter files">
+				<span id="match-count" class="muted">0 / 0</span>
+			</div>
+
+			<details class="noise" open>
+				<summary>Hide noise</summary>
+				<div class="noise-toggles">
+					<label class="toggle"><input type="checkbox" id="noise-git"> .git / tooling</label>
+					<label class="toggle"><input type="checkbox" id="noise-deps"> node_modules</label>
+					<label class="toggle"><input type="checkbox" id="noise-build"> build output</label>
+					<label class="toggle"><input type="checkbox" id="noise-dotfiles"> dotfiles</label>
+					<label class="toggle"><input type="checkbox" id="noise-binary"> binaries</label>
+				</div>
+			</details>
+
+			<div id="ext-chips" class="ext-chips" aria-label="Filter by extension"></div>
+
+			<div class="list-actions">
+				<button class="btn small" id="expand-all" type="button">Expand all</button>
+				<button class="btn small" id="collapse-all" type="button">Collapse all</button>
+			</div>
+
+			<div id="file-list" class="file-list"></div>
+		</aside>
+
+		<main class="main">
+			<section id="graph-panel" class="graph-panel" aria-label="Folder/file spider graph"></section>
+			<div id="vsplit" class="vsplit" role="separator" aria-orientation="horizontal" title="Drag to resize" tabindex="-1"></div>
+			<section id="viewer-panel" class="viewer-panel" aria-label="File content viewer"></section>
+		</main>
+
+		<footer id="status" class="statusbar info">Loading…</footer>
+	</div>
+
+	<!-- ===================== Vendored libraries (local, UMD globals) ===================== -->
+	<!-- All loaded as classic scripts so the tool runs from file:// in every browser. -->
+	<script src="vendor/vis-network.min.js"></script>
+	<script src="vendor/marked.min.js"></script>
+	<script src="vendor/purify.min.js"></script>
+	<script src="vendor/highlight.min.js"></script>
+	<!-- Extra highlight.js languages (not in the common build); each self-registers. -->
+	<script src="vendor/hljs-languages/powershell.min.js"></script>
+	<script src="vendor/hljs-languages/dockerfile.min.js"></script>
+	<script src="vendor/hljs-languages/dos.min.js"></script>
+	<script src="vendor/hljs-languages/scala.min.js"></script>
+	<script src="vendor/hljs-languages/dart.min.js"></script>
+	<script src="vendor/hljs-languages/fsharp.min.js"></script>
+	<script src="vendor/hljs-languages/clojure.min.js"></script>
+	<script src="vendor/hljs-languages/elixir.min.js"></script>
+	<script src="vendor/hljs-languages/erlang.min.js"></script>
+	<script src="vendor/hljs-languages/haskell.min.js"></script>
+	<script src="vendor/hljs-languages/groovy.min.js"></script>
+	<script src="vendor/hljs-languages/cmake.min.js"></script>
+
+	<!-- ===================== App modules (RV namespace, dependency order) ===================== -->
+	<script src="js/util.js"></script>
+	<script src="js/classify.js"></script>
+	<script src="js/state.js"></script>
+	<script src="js/indexer.js"></script>
+	<script src="js/sources.js"></script>
+	<script src="js/filters.js"></script>
+	<script src="js/list.js"></script>
+	<script src="js/graph.js"></script>
+	<script src="js/viewer.js"></script>
+	<script src="js/snapshot.js"></script>
+	<script src="js/app.js"></script>
+</body>
+</html>
