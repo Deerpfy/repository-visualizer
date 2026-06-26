@@ -29,6 +29,11 @@ html[data-theme="dark"] {
 	--graph-edge: #3a4150;
 	--graph-font: #cfd6e4;
 	--graph-ref: #ff6b81;
+	/* Flow diagram role colours (entry=START, terminal=END, cycle, normal node). */
+	--flow-entry: #1f6feb;
+	--flow-terminal: #2ea043;
+	--flow-cycle: #ff6b81;
+	--flow-node: #39414f;
 	--warn-bg: #3a2a12;
 	--warn-border: #7a5a1e;
 	--shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
@@ -54,6 +59,11 @@ html[data-theme="light"] {
 	--graph-edge: #c2cad6;
 	--graph-font: #2b3340;
 	--graph-ref: #d22b48;
+	/* Flow diagram role colours (entry=START, terminal=END, cycle, normal node). */
+	--flow-entry: #1f6feb;
+	--flow-terminal: #2ea043;
+	--flow-cycle: #d22b48;
+	--flow-node: #8a93a3;
 	--warn-bg: #fff5d6;
 	--warn-border: #e3c45a;
 	--shadow: 0 6px 20px rgba(20, 30, 50, 0.15);
@@ -140,6 +150,24 @@ body {
 	font-size: 12px;
 }
 .toggle input { accent-color: var(--accent); }
+
+/* Segmented control: Graph / Flow diagram mode switch. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.seg-btn {
+	font: inherit;
+	font-size: 12px;
+	color: var(--text-muted);
+	background: var(--bg-elev);
+	border: none;
+	border-right: 1px solid var(--border);
+	padding: 5px 11px;
+	cursor: pointer;
+	transition: background 0.12s, color 0.12s;
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { background: var(--row-hover); color: var(--text); }
+.seg-btn.active { background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+.seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ----------------------------- vendor warning ----------------------------- */
 .vendor-warning {
@@ -253,6 +281,7 @@ body {
 /* ----------------------------- main (graph + viewer) ----------------------------- */
 .main { grid-area: main; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .graph-panel { flex: 1 1 0; min-height: 120px; background: var(--graph-bg); position: relative; }
+.graph-panel[hidden] { display: none !important; } /* the inactive Graph/Flow panel */
 .viewer-panel { flex: 1 1 0; min-height: 120px; background: var(--panel); border-top: 1px solid var(--border); overflow: hidden; }
 .vsplit { flex: 0 0 8px; cursor: row-resize; background: var(--border); position: relative; }
 .vsplit::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 2px; background: var(--text-muted); border-radius: 2px; opacity: 0.6; }

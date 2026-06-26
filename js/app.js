@@ -10,7 +10,7 @@
 		saveDirHandle, loadDirHandle, ensureReadPermission, loadSnapshot,
 	} = RV;
 	const { loadGitRepo, setToken, clearToken, initToken } = RV;
-	const { createListView, createGraphView, createViewer, exportSnapshot } = RV;
+	const { createListView, createGraphView, createFlowView, createViewer, exportSnapshot, exportRepoMap } = RV;
 
 	// ---- element lookup ---------------------------------------------------
 
@@ -39,14 +39,18 @@
 		collapseAll: document.getElementById("collapse-all"),
 		fileList: document.getElementById("file-list"),
 		graphPanel: document.getElementById("graph-panel"),
+		flowPanel: document.getElementById("flow-panel"),
 		viewerPanel: document.getElementById("viewer-panel"),
 		vsplit: document.getElementById("vsplit"),
+		modeGraph: document.getElementById("mode-graph"),
+		modeFlow: document.getElementById("mode-flow"),
 		fitGraph: document.getElementById("fit-graph"),
 		graphExpandAll: document.getElementById("graph-expand-all"),
 		refOverlay: document.getElementById("ref-overlay"),
 		shotRes: document.getElementById("shot-res"),
 		screenshot: document.getElementById("btn-screenshot"),
 		snapshot: document.getElementById("btn-snapshot"),
+		exportMap: document.getElementById("btn-export-map"),
 		snapshotInline: document.getElementById("snapshot-inline"),
 		theme: document.getElementById("btn-theme"),
 		vendorWarning: document.getElementById("vendor-warning"),
@@ -76,6 +80,11 @@
 		onSelect: (entry) => selectEntry(entry, "graph"),
 		getRootName: () => state.source.rootName,
 	});
+	// Directed flow diagram (sits alongside the containment graph; off by default).
+	const flow = createFlowView(dom.flowPanel, {
+		onSelect: (meta) => { const real = state.byPath.get(meta.path); if (real) selectEntry(real, "flow"); },
+		getRootName: () => state.source.rootName,
+	});
 
 	function selectEntry(entry, from) {
 		if (!entry) return;
@@ -84,6 +93,7 @@
 		viewer.show(entry);
 		if (from !== "list") list.setSelected(entry.path);
 		if (from !== "graph" && graph.available) graph.setSelected(entry.path);
+		if (from !== "flow" && flow.available) flow.setSelected(entry.path);
 	}
 
 	// ---- load pipeline ----------------------------------------------------
@@ -138,6 +148,85 @@
 		if (state.selectedPath) list.setSelected(state.selectedPath);
 		updateGraph();
 	}
+
+	// ---- flow diagram (directed module graph from the shared engine) -----
+
+	let viewMode = "graph"; // "graph" (containment) | "flow" (directed)
+	let flowModel = null;
+	let flowDirty = true; // rebuild the model on the next Flow render / export
+
+	// Read the shallowest entry with a given basename (index.html / package.json) to
+	// seed entry points. Returns "" if absent or unreadable — analysis still proceeds.
+	async function readNamed(name) {
+		const matches = state.entries.filter((e) => e.name.toLowerCase() === name);
+		if (!matches.length) return "";
+		matches.sort((a, b) => a.path.split("/").length - b.path.split("/").length);
+		try { return await RV.readText(matches[0]); } catch { return ""; }
+	}
+
+	// Build (and cache) the AnalysisModel from the current index. Reuses RV.readText so
+	// content is read lazily, exactly like the viewer/overlay.
+	async function buildFlowModel() {
+		if (flowModel && !flowDirty) return flowModel;
+		if (!RV.engine || !RV.engine.buildModel) throw new Error("analysis engine (js/engine.js) failed to load");
+		if (!state.entries.length) return null;
+		const indexHtmlText = await readNamed("index.html");
+		let packageJson = null;
+		const pkgText = await readNamed("package.json");
+		if (pkgText) { try { packageJson = JSON.parse(pkgText); } catch { /* malformed package.json — ignore */ } }
+		const model = await RV.engine.buildModel({
+			rootName: state.source.rootName || "repository",
+			entries: state.entries,
+			readText: RV.readText,
+			indexHtmlText,
+			packageJson,
+			includeNoise: false,
+			generatedAt: new Date().toISOString(),
+		});
+		flowModel = model;
+		flowDirty = false;
+		return model;
+	}
+
+	async function renderFlow() {
+		if (!flow.available) { status("Flow diagram unavailable — vendor/vis-network.min.js missing.", "warn"); return; }
+		if (!state.entries.length) { status("Open a folder first to see the module flow.", "warn"); return; }
+		if (!flowDirty && flowModel) { flow.fit(); return; }
+		status("Analyzing module flow (reads file contents)…", "info", true);
+		await new Promise((r) => setTimeout(r, 0)); // let the busy status paint
+		try {
+			const model = await buildFlowModel();
+			const st = flow.setModel(model) || {};
+			const cyc = model.cycles.length;
+			let msg = cyc ? `${cyc} import cycle(s) found — highlighted in red.` : "No import cycles — flow reads start → END.";
+			if (st.truncated) msg = `Showing the ${st.shown} most-connected of ${model.nodes.length} modules. ` + msg;
+			status(msg, cyc ? "warn" : "ok");
+		} catch (err) {
+			status(`Flow analysis failed: ${err.message || err}`, "error");
+		}
+	}
+
+	function setViewMode(mode) {
+		if (mode === viewMode) { (mode === "flow" ? flow : graph).available && (mode === "flow" ? flow : graph).fit(); return; }
+		viewMode = mode;
+		const isFlow = mode === "flow";
+		dom.graphPanel.hidden = isFlow;
+		dom.flowPanel.hidden = !isFlow;
+		dom.modeGraph?.classList.toggle("active", !isFlow);
+		dom.modeFlow?.classList.toggle("active", isFlow);
+		dom.modeGraph?.setAttribute("aria-pressed", String(!isFlow));
+		dom.modeFlow?.setAttribute("aria-pressed", String(isFlow));
+		// Containment-only controls don't apply to the flow view.
+		if (dom.graphExpandAll) dom.graphExpandAll.disabled = isFlow;
+		if (dom.refOverlay) dom.refOverlay.disabled = isFlow;
+		window.dispatchEvent(new Event("resize")); // let vis re-fit the now-visible canvas
+		if (isFlow) renderFlow();
+	}
+	dom.modeGraph?.addEventListener("click", () => setViewMode("graph"));
+	dom.modeFlow?.addEventListener("click", () => setViewMode("flow"));
+
+	// A new index invalidates the cached model; rebuild if Flow is currently showing.
+	on(EV.INDEX, () => { flowDirty = true; flowModel = null; if (viewMode === "flow") renderFlow(); });
 
 	// ---- extension facet chips -------------------------------------------
 
@@ -260,7 +349,9 @@
 
 	// ---- toolbar ----------------------------------------------------------
 
-	dom.fitGraph?.addEventListener("click", () => graph.available && graph.fit());
+	function activeView() { return viewMode === "flow" ? flow : graph; }
+
+	dom.fitGraph?.addEventListener("click", () => { const v = activeView(); if (v.available) v.fit(); });
 
 	dom.graphExpandAll?.addEventListener("click", () => {
 		if (!graph.available) { status("Graph is not available.", "warn"); return; }
@@ -275,21 +366,23 @@
 	});
 
 	dom.screenshot?.addEventListener("click", async () => {
-		if (!graph.available) { status("Graph is not available.", "warn"); return; }
+		const view = activeView();
+		if (!view.available) { status(`${viewMode === "flow" ? "Flow diagram" : "Graph"} is not available.`, "warn"); return; }
 		if (!state.entries.length) { status("Open a folder first.", "warn"); return; }
+		if (viewMode === "flow" && !flow.hasModel()) { status("Switch to Flow and let the diagram render before a screenshot.", "warn"); return; }
 		const { width, height } = screenshotResolution();
 		try {
-			status(`Rendering ${width}×${height} graph screenshot…`, "info", true);
-			const blob = await graph.exportImage({ width, height });
+			status(`Rendering ${width}×${height} ${viewMode} screenshot…`, "info", true);
+			const blob = await view.exportImage({ width, height });
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
 			a.href = url;
-			a.download = `graph-${(state.source.rootName || "repo").replace(/[^\w.-]+/g, "_")}-${width}x${height}.png`;
+			a.download = `${viewMode}-${(state.source.rootName || "repo").replace(/[^\w.-]+/g, "_")}-${width}x${height}.png`;
 			document.body.appendChild(a);
 			a.click();
 			a.remove();
 			setTimeout(() => URL.revokeObjectURL(url), 1500);
-			status(`Saved graph screenshot (${width}×${height}, ${Math.round(blob.size / 1024)} KB).`, "ok");
+			status(`Saved ${viewMode} screenshot (${width}×${height}, ${Math.round(blob.size / 1024)} KB).`, "ok");
 		} catch (err) {
 			status(`Screenshot failed: ${err.message || err}`, "error");
 		}
@@ -325,6 +418,25 @@
 		}
 	});
 
+	// Export the directed flow as a Markdown "full picture" map (docs/repo-map.md).
+	dom.exportMap?.addEventListener("click", async () => {
+		if (!state.entries.length) { status("Open a folder before exporting the map.", "warn"); return; }
+		if (!exportRepoMap) { status("Map export unavailable — js/flowexport.js failed to load.", "warn"); return; }
+		try {
+			status("Building repository map…", "info", true);
+			await new Promise((r) => setTimeout(r, 0));
+			const model = await buildFlowModel();
+			if (!model) { status("Nothing to export yet.", "warn"); return; }
+			const msg = await exportRepoMap(model, {
+				title: `Repository map — ${state.source.rootName || "repository"}`,
+				suggestedName: "repo-map.md",
+			}, (m) => status(m, "info", true));
+			status(msg, "ok");
+		} catch (err) {
+			status(`Map export failed: ${err.message || err}`, "error");
+		}
+	});
+
 	// ---- theme ------------------------------------------------------------
 
 	const themeOrder = ["auto", "dark", "light"];
@@ -342,6 +454,7 @@
 		if (lightLink) lightLink.disabled = t !== "light";
 		if (dom.theme) dom.theme.textContent = `Theme: ${state.settings.theme}`;
 		if (graph.available) graph.refreshTheme();
+		if (flow.available) flow.refreshTheme();
 	}
 	dom.theme?.addEventListener("click", () => {
 		const i = themeOrder.indexOf(state.settings.theme);
@@ -372,8 +485,12 @@
 			const main = dom.graphPanel.parentElement;
 			const rect = main.getBoundingClientRect();
 			const h = Math.max(120, Math.min(rect.height - 120, clientY - rect.top));
-			dom.graphPanel.style.height = `${h}px`;
-			dom.graphPanel.style.flex = "0 0 auto";
+			// Size both panels; only the visible one is laid out (the other is [hidden]).
+			for (const p of [dom.graphPanel, dom.flowPanel]) {
+				if (!p) continue;
+				p.style.height = `${h}px`;
+				p.style.flex = "0 0 auto";
+			}
 			window.dispatchEvent(new Event("resize")); // let vis-network re-fit
 		};
 		dom.vsplit.addEventListener("pointerdown", (e) => { dragging = true; dom.vsplit.setPointerCapture(e.pointerId); e.preventDefault(); });

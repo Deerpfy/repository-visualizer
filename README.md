@@ -1,6 +1,6 @@
 ---
 title: Repository Visualizer
-version: 1.1.0
+version: 1.2.0
 last_updated: 2026-06-26
 status: stable
 ---
@@ -242,3 +242,109 @@ no bundler, no transpiler, no server.
 vis-network 9.1.9 · marked 13.0.2 · DOMPurify 3.1.6 · highlight.js 11.10.0
 (common build + extra language packs). Exact files, versions, and re-download
 commands are in [`vendor/README.md`](vendor/README.md).
+
+<!-- AI-API:BEGIN (managed) -->
+## AI agent instructions & repository API
+
+> **Directive — read this first.** Any AI agent working with this repository **MUST
+> obtain the architecture before editing**: run the analysis and read
+> [`docs/repo-map.md`](docs/repo-map.md). Treat that file as the **authoritative map** —
+> its entry points are the **START** of the program flow, its terminal modules are the
+> **END**, and it lists every import **cycle** and the layered START→END flow.
+> **Regenerate it after any structural change** (added/removed/renamed modules or
+> changed imports) so the map never goes stale. You can point the analysis at **any
+> repository anywhere** by passing a local path or a git/GitHub URL.
+
+Beyond the folder spider-graph, this repo ships a **directed module-flow analysis** with
+**three interchangeable surfaces over one shared engine** (`js/engine.js` +
+`js/mapmd.js` — the single source of truth; the browser, the CLI and the HTTP server all
+consume them, none re-implement the logic):
+
+### 1. ENGINE (in-process)
+
+```js
+// Browser (already loaded as window.RV): build the model from the current index.
+const model = await RV.engine.buildModel({ rootName, entries, readText: RV.readText, indexHtmlText, packageJson });
+const markdown = RV.buildMarkdownMap(model, { title: "Repository map" });
+
+// Node (CommonJS): same logic, headless.
+const engine = require("./js/engine.js");
+const { buildMarkdownMap } = require("./js/mapmd.js");
+const model = await engine.buildModel({ rootName, entries, readText /* async (entry)=>string */ });
+```
+
+### 2. CLI (`scripts/repo-analyze.js`) — analyze any repo, emit JSON + Markdown
+
+```bash
+# This repo → write the full picture into docs/.
+node scripts/repo-analyze.js . --md docs/repo-map.md --json docs/repo-map.json
+
+# Any other local folder, or a GitHub URL (shallow clone; falls back to the GitHub API).
+node scripts/repo-analyze.js ../some-other-repo --md docs/repo-map.md
+node scripts/repo-analyze.js https://github.com/owner/repo --md docs/repo-map.md
+# Print the Markdown to stdout instead of writing a file:
+node scripts/repo-analyze.js . --stdout
+```
+
+Node built-ins only — **no `npm install`, no dependencies, no `node_modules`.** A token
+for private repos / higher GitHub rate limits is read from `GITHUB_TOKEN` (env only).
+
+### 3. HTTP API (`scripts/api-server.js`) — optional local endpoints
+
+```bash
+node scripts/api-server.js            # binds http://127.0.0.1:4317 (localhost only)
+node scripts/api-server.js --port 5000 --root ..   # widen the allowed local-repo root
+```
+
+| Method | Path | Params | Returns |
+|--------|------|--------|---------|
+| `GET`  | `/api/health` | — | `{ ok, name, version }` |
+| `POST` | `/api/analyze` | JSON body `{ repo, includeNoise? }` | the full **AnalysisModel** |
+| `GET`  | `/api/flow` | `repo`, `includeNoise?` | `{ root, entries, terminals, cycles, layers, metrics }` |
+| `GET`  | `/api/graph` | `repo`, `mode=flow\|containment` | `{ nodes, edges }` |
+| `GET`  | `/api/export` | `repo`, `format=md\|json`, `write=1?` | Markdown text or JSON (`write=1` → writes `docs/repo-map.md`) |
+| `GET`  | `/` | — | serves the visualizer UI |
+
+```bash
+# Example request:
+curl "http://127.0.0.1:4317/api/health"
+# Example (trimmed) response:
+# { "ok": true, "name": "repository-visualizer", "version": "1.2.0" }
+
+curl "http://127.0.0.1:4317/api/export?repo=.&format=md&write=1"
+# → { "written": "docs/repo-map.md" }   (and the same Markdown the CLI writes)
+```
+
+`repo` is validated: local paths must resolve **under the allowed root** (the directory
+the server was launched in, or `--root`), and only `http(s)`/git URLs are treated as
+remote. The server binds to **127.0.0.1 only**, never executes file content, and invokes
+`git` via an argument array (never a shell string).
+
+### Get the full picture (procedure)
+
+1. Run the analyzer on the target repository (`.` for this one, or any path / git URL).
+2. Write [`docs/repo-map.md`](docs/repo-map.md) (and optionally `docs/repo-map.json`).
+3. Read `docs/repo-map.md`: **entry points = START**, **terminal modules = END**,
+   plus the **Cycles** section and the layered **Execution / dependency flow**.
+4. After structural edits, regenerate it so the map stays authoritative.
+
+In the browser UI, the same is available without scripts: toggle **Flow** in the topbar
+to render the directed diagram (cycles highlighted in red), and click **Export map (.md)**
+to save `repo-map.md`.
+
+### Machine-readable surface map
+
+```json
+{
+  "engine": { "browser": "RV.engine.buildModel(...)", "node": "require('./js/engine.js').buildModel(...)", "markdown": "RV.buildMarkdownMap / require('./js/mapmd.js')" },
+  "cli": "node scripts/repo-analyze.js <repo> --md docs/repo-map.md --json docs/repo-map.json",
+  "http": { "start": "node scripts/api-server.js", "base": "http://127.0.0.1:4317", "endpoints": ["GET /api/health", "POST /api/analyze", "GET /api/flow", "GET /api/graph", "GET /api/export"] },
+  "export": "docs/repo-map.md",
+  "reference": "docs/API.md"
+}
+```
+
+See [`docs/API.md`](docs/API.md) for the complete engine, CLI and HTTP reference (every
+field, flag and endpoint with request/response examples) and [`AGENTS.md`](AGENTS.md) for
+the one-line contract.
+<!-- AI-API:END -->

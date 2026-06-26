@@ -236,6 +236,8 @@
 			const myToken = ++overlayToken;
 			if (refEdges.length) { edges.remove(refEdges); refEdges = []; }
 			if (!on) { if (onStatus) onStatus("Reference overlay off."); return; }
+			// The parser lives in the shared engine (single source of truth).
+			if (!RV.engine || !RV.engine.parseRefs) { if (onStatus) onStatus("Reference overlay unavailable: js/engine.js failed to load."); return; }
 
 			const fileMetas = [...nodeMeta.values()].filter((m) => m.kind === "file");
 			let parsed = 0;
@@ -250,8 +252,8 @@
 				if ((e.size || 0) > 256 * 1024) continue;
 				let text;
 				try { text = await readText(e); } catch { continue; }
-				for (const target of extractRefs(text)) {
-					const resolved = resolveRef(target, e.path, fileMetas);
+				for (const target of RV.engine.parseRefs(text)) {
+					const resolved = RV.engine.resolveRef(target, e.path, fileMetas);
 					if (resolved && resolved !== e.path) {
 						newEdges.push({ id: `r${newEdges.length}_${m.path}`, from: e.path, to: resolved, dashes: true, color: { color: colors.ref, opacity: 0.7 }, width: 0.8, smooth: { type: "curvedCW", roundness: 0.2 } });
 					}
@@ -402,54 +404,10 @@
 		};
 	}
 
-	// ---- reference parsing (best-effort, conservative) -------------------
-
-	function extractRefs(text) {
-		const refs = [];
-		const push = (s) => { if (s) refs.push(s.trim()); };
-		let m;
-		const reFrom = /(?:import|export)\s[^;'"]*?from\s*['"]([^'"]+)['"]/g;
-		while ((m = reFrom.exec(text))) push(m[1]);
-		const reBareImport = /\bimport\s*['"]([^'"]+)['"]/g;
-		while ((m = reBareImport.exec(text))) push(m[1]);
-		const reReq = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-		while ((m = reReq.exec(text))) push(m[1]);
-		const reInc = /#\s*include\s*[<"]([^>"]+)[>"]/g;
-		while ((m = reInc.exec(text))) push(m[1]);
-		const rePyFrom = /^\s*from\s+([.\w]+)\s+import\b/gm;
-		while ((m = rePyFrom.exec(text))) push(m[1].replace(/\./g, "/"));
-		return refs.slice(0, 200); // safety cap per file
-	}
-
-	function resolveRef(target, fromPath, fileMetas) {
-		const fromDir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
-		const exts = ["", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".py", ".h", ".hpp", ".cpp", ".c", ".css", ".json"];
-		if (target.startsWith(".")) {
-			const base = normalize(`${fromDir}/${target}`);
-			for (const ext of exts) {
-				const cand = base + ext;
-				const hit = fileMetas.find((f) => f.path === cand || f.path === `${cand}/index.js` || f.path === `${cand}/index.ts`);
-				if (hit) return hit.path;
-			}
-			return null;
-		}
-		const baseTarget = target.replace(/\\/g, "/");
-		const bySuffix = fileMetas.find((f) => f.path.endsWith("/" + baseTarget) || f.path === baseTarget);
-		if (bySuffix) return bySuffix.path;
-		const justName = baseTarget.split("/").pop();
-		const byName = fileMetas.find((f) => f.entry?.name === justName || f.path.endsWith("/" + justName));
-		return byName ? byName.path : null;
-	}
-
-	function normalize(path) {
-		const parts = [];
-		for (const seg of path.split("/")) {
-			if (seg === "" || seg === ".") continue;
-			if (seg === "..") parts.pop();
-			else parts.push(seg);
-		}
-		return parts.join("/");
-	}
+	// The reference parser (extractRefs/resolveRef/normalize) used to live here.
+	// It now lives in js/engine.js as RV.engine.parseRefs / resolveRef / normalizePath
+	// — the single source of truth shared by the overlay, the flow diagram, and the
+	// Node CLI/HTTP API. See setRefOverlay() above for the call sites.
 
 	Object.assign(RV, { createGraphView });
 })(window.RV = window.RV || {});
