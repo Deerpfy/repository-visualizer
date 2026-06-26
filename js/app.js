@@ -9,6 +9,7 @@
 		rawEntriesFromFileList, supportsFSAccess, pickDirectoryHandle, enumerateDirectoryHandle,
 		saveDirHandle, loadDirHandle, ensureReadPermission, loadSnapshot,
 	} = RV;
+	const { loadGitRepo, setToken, clearToken, initToken } = RV;
 	const { createListView, createGraphView, createViewer, exportSnapshot } = RV;
 
 	// ---- element lookup ---------------------------------------------------
@@ -19,6 +20,11 @@
 		openFs: document.getElementById("open-fsaccess"),
 		reopen: document.getElementById("reopen-last"),
 		sourceLabel: document.getElementById("source-label"),
+		repoUrl: document.getElementById("repo-url"),
+		loadUrl: document.getElementById("load-url"),
+		ghToken: document.getElementById("gh-token"),
+		ghTokenRemember: document.getElementById("gh-token-remember"),
+		ghTokenClear: document.getElementById("gh-token-clear"),
 		filter: document.getElementById("filter"),
 		matchCount: document.getElementById("match-count"),
 		extChips: document.getElementById("ext-chips"),
@@ -203,6 +209,34 @@
 		saveDirHandle(handle);
 	}
 
+	// ---- remote: load a GitHub repo by URL (opt-in; the only networked feature) ----
+
+	async function loadFromUrl() {
+		const input = (dom.repoUrl?.value || "").trim();
+		if (!input) { status("Paste a GitHub repo URL first (e.g. github.com/owner/repo).", "warn"); dom.repoUrl?.focus(); return; }
+		if (dom.ghToken) setToken(dom.ghToken.value, !!dom.ghTokenRemember?.checked);
+		try {
+			status("Loading repository from GitHub…", "info", true);
+			const { rawEntries, meta } = await loadGitRepo(input, (m) => status(m, "info", true));
+			if (!rawEntries.length) { status("That repository appears to be empty.", "warn"); return; }
+			await loadRawEntries(rawEntries, { mode: "remote", rootName: meta.rootName, handle: null });
+			let msg = `Loaded ${rawEntries.length} files from ${meta.owner}/${meta.repo}@${meta.branch}.`;
+			if (meta.truncated) status(`${msg} GitHub truncated the list (repo is very large).`, "warn");
+			else status(msg, "ok");
+		} catch (err) {
+			status(err.message || String(err), "error");
+		}
+	}
+
+	dom.loadUrl?.addEventListener("click", loadFromUrl);
+	dom.repoUrl?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loadFromUrl(); } });
+	dom.ghTokenClear?.addEventListener("click", () => {
+		clearToken();
+		if (dom.ghToken) dom.ghToken.value = "";
+		if (dom.ghTokenRemember) dom.ghTokenRemember.checked = false;
+		status("GitHub token cleared.", "ok");
+	});
+
 	// ---- filter + noise wiring -------------------------------------------
 
 	const onFilter = debounce(() => {
@@ -365,6 +399,13 @@
 		if (dom.snapshotInline) dom.snapshotInline.checked = state.settings.inlineSnapshot;
 		dom.snapshotInline?.addEventListener("change", () => { state.settings.inlineSnapshot = dom.snapshotInline.checked; persistSettings(); });
 		if (dom.filter) dom.filter.value = "";
+
+		// Remote loader: restore a remembered GitHub token (if any) into the field.
+		const savedToken = initToken();
+		if (savedToken && dom.ghToken) {
+			dom.ghToken.value = savedToken;
+			if (dom.ghTokenRemember) dom.ghTokenRemember.checked = true;
+		}
 
 		// Tier 2: offer to reopen the last folder if a handle was persisted.
 		if (supportsFSAccess()) {

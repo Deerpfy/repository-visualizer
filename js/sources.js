@@ -179,27 +179,41 @@
 
 	/** True if the entry's bytes can be read in this session. */
 	function hasContent(entry) {
-		return !!(entry.file || entry.handle || entry.inline != null);
+		return !!(entry.file || entry.handle || entry.inline != null || entry.url);
+	}
+
+	/** Fetch a remote entry (GitHub raw URL). Throws a friendly error on failure. */
+	async function fetchRemote(entry) {
+		let res;
+		try {
+			res = await fetch(entry.url);
+		} catch {
+			throw new Error("Could not fetch file (network error).");
+		}
+		if (!res.ok) throw new Error("Could not fetch file (HTTP " + res.status + ").");
+		return res;
 	}
 
 	/** Read an entry's content as text (UTF-8). Throws if no content source. */
 	async function readText(entry) {
 		if (entry.inline != null) return entry.inline;
 		const file = await getFile(entry);
-		if (!file) throw new Error("no-content-source");
-		return await file.text();
+		if (file) return await file.text();
+		if (entry.url) return await (await fetchRemote(entry)).text();
+		throw new Error("no-content-source");
 	}
 
 	/** Read an entry's content as an ArrayBuffer. Throws if no content source. */
 	async function readBytes(entry) {
 		const file = await getFile(entry);
-		if (!file) throw new Error("no-content-source");
-		return await file.arrayBuffer();
+		if (file) return await file.arrayBuffer();
+		if (entry.url) return await (await fetchRemote(entry)).arrayBuffer();
+		throw new Error("no-content-source");
 	}
 
 	/**
 	 * Produce an object URL for an entry (for <img>). Returns { url, revoke } or null.
-	 * Falls back to an inlined data URL when only a snapshot is available.
+	 * Remote entries return their raw URL directly; snapshots may carry a data URL.
 	 */
 	async function objectUrlFor(entry) {
 		const file = await getFile(entry);
@@ -207,6 +221,7 @@
 			const url = URL.createObjectURL(file);
 			return { url, revoke: () => URL.revokeObjectURL(url) };
 		}
+		if (entry.url) return { url: entry.url, revoke: () => {} }; // remote raw URL — <img> loads it directly
 		if (entry.inline != null && entry.inline.startsWith("data:")) {
 			return { url: entry.inline, revoke: () => {} };
 		}

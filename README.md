@@ -1,20 +1,24 @@
 ---
 title: Repository Visualizer
-version: 1.0.0
+version: 1.1.0
 last_updated: 2026-06-26
 status: stable
 ---
 
 # Repository Visualizer
 
-A **local, offline, single-page** tool that browses every file in a repository and
-draws a force-directed *spider-web* graph of its folder/file hierarchy. Click any
-file to render its contents (markdown, source code, text, images).
+A **single-page** tool that browses every file in a repository and draws a
+force-directed *spider-web* graph of its folder/file hierarchy. Click any file to
+render its contents (markdown, source code, text, images). Point it at a **local
+folder** or a **GitHub repo URL**.
 
 It runs by **opening `index.html` in a browser** — no server, no install, no build
-step, and **zero network requests at runtime**. The whole `docs/visualizer/` folder
-is self-contained and copy-paste portable: drop it into any repo and it behaves
-identically.
+step. The whole `docs/visualizer/` folder is self-contained and copy-paste portable:
+drop it into any repo, or **host it as a static page** so anyone can use it.
+
+The local folder path is **fully offline** (zero network requests). The optional
+*Load from URL* feature is the only part that uses the network, and only when you
+use it.
 
 ---
 
@@ -61,6 +65,10 @@ arbitrary sibling files. The tool is designed *around* that, not against it:
   `data/index.json`. If present (and your browser allows the read), it opens with
   zero interaction — useful for sharing the visualizer as a static page. The
   snapshot is generated **by the app itself**, in-browser (see below).
+- **Tier 4 — Remote git URL (opt-in, networked).** Paste a GitHub repo link and the
+  app fetches its full file tree from the GitHub API (one request) and reads file
+  contents on click from `raw.githubusercontent.com`. Works locally and when hosted.
+  This is the only feature that touches the network.
 
 ## Features
 
@@ -83,6 +91,8 @@ arbitrary sibling files. The tool is designed *around* that, not against it:
 - Content rendering: markdown (sanitized), syntax-highlighted source across a wide
   language map, plain text as monospace, images inline, binary/oversized as a
   metadata-only panel with **Load anyway**.
+- **Load from URL** → browse any GitHub repo by link (no clone), with optional token
+  for private repos / higher rate limits.
 - Dark / light / auto theme, full keyboard navigation, copy-path.
 
 ## Keyboard shortcuts
@@ -130,6 +140,55 @@ active theme's graph color.
 > the app reports it and you can pick a smaller one. **Tip:** combine a high
 > resolution with **Expand all** to capture every labeled node in one readable image.
 
+## Load a GitHub repo by URL
+
+Paste a repository link into the **Load from URL** box in the sidebar and press
+**Load** (or Enter). Accepted forms:
+
+```
+github.com/owner/repo
+https://github.com/owner/repo
+https://github.com/owner/repo/tree/<branch>
+owner/repo
+```
+
+The app fetches the whole file tree from the GitHub API in one request, then loads
+file contents on click from `raw.githubusercontent.com`. It works the same whether
+you opened `index.html` locally or it's hosted — GitHub allows these cross-origin
+reads. Everything downstream (filter, graph, viewer, screenshot, snapshot) behaves
+exactly as it does for a local folder.
+
+- **Public repos** need no setup.
+- **Private repos / rate limits:** open **Private repo / token**, paste a GitHub
+  personal access token (a fine-grained token with read-only "Contents" access is
+  enough). Without a token, unauthenticated GitHub API calls are limited to ~60/hour;
+  a token raises that to 5000/hour. Tick **Remember in this browser** to keep it in
+  this browser's local storage (it's used only for GitHub calls, never sent elsewhere
+  or committed); use **Clear** to remove it.
+- **Very large repos:** GitHub truncates trees beyond ~100k entries; the app loads
+  what it returns and tells you it was truncated.
+
+## Host it publicly (GitHub Pages)
+
+The tool is static, so anyone can use it from a public URL — they just open the page
+and **Open Folder** (or **Load from URL**) to see the same structure as local. Over
+`https://`, the folder picker, File System Access, and snapshot auto-load all work
+(snapshot fetch actually works *better* than over `file://`).
+
+A ready-to-use workflow is included at
+[`deploy/github-pages.yml`](deploy/github-pages.yml):
+
+1. **Either** put the tool in its own repo (copy the contents of `docs/visualizer/`
+   to the repo root), **or** keep it at `docs/visualizer/` inside a larger repo.
+2. Copy `deploy/github-pages.yml` to `.github/workflows/pages.yml` and, if needed,
+   adjust the `path:` (default `docs/visualizer`; use `.` if the tool is the repo
+   root) and the trigger branch.
+3. In the repo: **Settings → Pages → Source: GitHub Actions**.
+4. Push. The Action publishes the page; its URL appears in the run summary.
+
+Any static host (Netlify, Cloudflare Pages, S3, nginx…) works too — just serve the
+folder; there is no build step.
+
 ## Copy into another repo
 
 1. Copy the entire `docs/visualizer/` folder anywhere inside the target repo (the
@@ -141,14 +200,20 @@ Nothing outside this folder is referenced, so it is fully relocatable.
 
 ## Security & offline guarantees
 
-- **Zero network at runtime.** No CDNs, web fonts, analytics, or telemetry. Every
-  asset is under `vendor/`. Rendered markdown/SVG with remote `<img>` has its `src`
-  stripped so nothing fetches the network; external links open in a new tab with
-  `rel="noopener noreferrer"`.
-- **All file content is untrusted.** Markdown, code highlight output, and SVG are
-  sanitized through **DOMPurify** before insertion. No `eval`; raw file text is never
-  assigned to `innerHTML`. If DOMPurify is missing, the app refuses to inject HTML
-  and shows inert text instead.
+- **No CDNs, ever.** All libraries and assets are vendored under `vendor/` and load
+  locally. No web fonts, analytics, or telemetry.
+- **The local folder path is fully offline** — zero network requests. The **only**
+  network calls the app makes are the opt-in *Load from URL* feature:
+  `api.github.com` (the file tree) and `raw.githubusercontent.com` (file contents),
+  and only after you paste a URL and press Load.
+- **Tokens stay local.** A GitHub token you enter is used only for GitHub API calls.
+  It is kept in memory, or in this browser's local storage if you tick *Remember* —
+  never sent anywhere else and never written into a committed file.
+- **All file content is untrusted** (local or remote). Markdown, code-highlight
+  output, and SVG are sanitized through **DOMPurify** before insertion. No `eval`;
+  raw file text is never assigned to `innerHTML`. Rendered markdown/SVG with a remote
+  `<img>` has its `src` stripped; external links open with `rel="noopener noreferrer"`.
+  If DOMPurify is missing, the app refuses to inject HTML and shows inert text.
 
 ## File layout
 
@@ -157,10 +222,11 @@ docs/visualizer/
   index.html        # shell: loads vendored globals, then the app modules
   app.css           # all styling + dark/light theme tokens
   js/               # app modules (classic scripts on a shared window.RV namespace)
-    util.js classify.js state.js indexer.js sources.js filters.js
-    list.js graph.js viewer.js snapshot.js app.js
-  vendor/           # vendored libraries (see vendor/README.md) — no network at runtime
+    util.js classify.js state.js indexer.js sources.js remote.js
+    filters.js list.js graph.js viewer.js snapshot.js app.js
+  vendor/           # vendored libraries (see vendor/README.md) — all local
   data/             # optional generated index.json snapshot (.gitkeep committed)
+  deploy/           # github-pages.yml — copy to .github/workflows/ to host on Pages
   README.md         # this file
 ```
 

@@ -26,6 +26,7 @@
 			file: raw.file ?? null, // File object (Tier 1)
 			handle: raw.handle ?? null, // FileSystemFileHandle (Tier 2)
 			inline: raw.inline ?? null, // inlined text content (Tier 3 snapshot)
+			url: raw.url ?? null, // remote raw URL (git-URL loader)
 		};
 	}
 

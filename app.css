@@ -167,6 +167,23 @@ body {
 .source .btn { flex: 0 0 auto; }
 .source-label { flex-basis: 100%; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.source-remote { display: flex; flex-direction: column; gap: 5px; }
+.remote-row { display: flex; gap: 6px; }
+#repo-url {
+	flex: 1; min-width: 0; font: inherit; color: var(--text);
+	background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 9px;
+}
+#repo-url:focus-visible { outline: 2px solid var(--accent); border-color: var(--accent); }
+.remote-token { font-size: 12px; }
+.remote-token > summary { cursor: pointer; color: var(--text-muted); padding: 1px 0; user-select: none; }
+.remote-token-body { display: flex; flex-direction: column; gap: 5px; padding-top: 5px; }
+#gh-token {
+	font: inherit; color: var(--text); background: var(--bg);
+	border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
+}
+.remote-token-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.remote-hint { font-size: 11px; line-height: 1.4; margin: 0; }
+
 .filter-row { display: flex; align-items: center; gap: 8px; }
 #filter {
 	flex: 1;

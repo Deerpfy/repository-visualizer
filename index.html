@@ -76,6 +76,27 @@
 				<div class="source-label muted" id="source-label">No folder opened</div>
 			</div>
 
+			<!-- Opt-in remote source: load a GitHub repo by URL (the only networked feature). -->
+			<div class="source-remote">
+				<div class="remote-row">
+					<input id="repo-url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+						placeholder="github.com/owner/repo  (load from URL)" aria-label="GitHub repository URL">
+					<button class="btn primary" id="load-url" type="button">Load</button>
+				</div>
+				<details class="remote-token">
+					<summary>Private repo / token</summary>
+					<div class="remote-token-body">
+						<input id="gh-token" type="password" autocomplete="off" spellcheck="false"
+							placeholder="GitHub personal access token (optional)" aria-label="GitHub token">
+						<div class="remote-token-actions">
+							<label class="toggle"><input type="checkbox" id="gh-token-remember"> Remember in this browser</label>
+							<button class="btn small" id="gh-token-clear" type="button">Clear</button>
+						</div>
+						<p class="remote-hint muted">Used only for GitHub API calls. “Remember” stores it in this browser’s local storage — never sent anywhere else or committed.</p>
+					</div>
+				</details>
+			</div>
+
 			<div class="filter-row">
 				<input id="filter" type="search" placeholder="Filter files…  (press /)" autocomplete="off" spellcheck="false" aria-label="Filter files">
 				<span id="match-count" class="muted">0 / 0</span>
@@ -137,6 +158,7 @@
 	<script src="js/state.js"></script>
 	<script src="js/indexer.js"></script>
 	<script src="js/sources.js"></script>
+	<script src="js/remote.js"></script>
 	<script src="js/filters.js"></script>
 	<script src="js/list.js"></script>
 	<script src="js/graph.js"></script>
