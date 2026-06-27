@@ -184,7 +184,8 @@
 				{ nodes, edges },
 				{
 					autoResize: true,
-					interaction: { hover: true, tooltipDelay: 1e9, navigationButtons: false, keyboard: false, multiselect: false, hideEdgesOnDrag: true },
+					// hideEdgesOnDrag off so the connected "web" is visibly pulled along while dragging.
+					interaction: { hover: true, tooltipDelay: 1e9, navigationButtons: false, keyboard: false, multiselect: false, hideEdgesOnDrag: false, dragNodes: true },
 					nodes: { shape: "dot", font: { color: colors.font, size: 11, face: "system-ui" }, borderWidth: 1 },
 					edges: { smooth: false, color: { color: colors.edge, opacity: 0.5 }, width: 0.7 },
 					physics: {
@@ -214,7 +215,24 @@
 				positionTip();
 			});
 			network.on("blurNode", () => (tip.style.display = "none"));
-			network.on("dragStart", () => (tip.style.display = "none"));
+			network.on("dragStart", (params) => {
+				tip.style.display = "none";
+				// The layout is frozen at rest (so dense folders don't jitter forever). Wake
+				// physics for the duration of a NODE drag so the connected nodes get pulled
+				// along by the springs — dragging a folder drags its subtree, not just the dot.
+				if (params.nodes && params.nodes.length) {
+					clearTimeout(freezeTimer);
+					try { network.setOptions({ physics: true }); } catch {}
+				}
+			});
+			network.on("dragEnd", (params) => {
+				// After releasing a node, let neighbors settle into the new position, then
+				// freeze again so the graph comes fully to rest (no perpetual jitter).
+				if (params.nodes && params.nodes.length) {
+					clearTimeout(freezeTimer);
+					freezeTimer = setTimeout(freezePhysics, 1500);
+				}
+			});
 			network.on("stabilizationIterationsDone", () => {
 				if (shouldFit) { try { network.fit(); } catch {} shouldFit = false; }
 				freezePhysics(); // freeze once settled — prevents dense folders from jittering
@@ -407,7 +425,7 @@
 	// The reference parser (extractRefs/resolveRef/normalize) used to live here.
 	// It now lives in js/engine.js as RV.engine.parseRefs / resolveRef / normalizePath
 	// — the single source of truth shared by the overlay, the flow diagram, and the
-	// Node CLI/HTTP API. See setRefOverlay() above for the call sites.
+	// Node CLI. See setRefOverlay() above for the call sites.
 
 	Object.assign(RV, { createGraphView });
 })(window.RV = window.RV || {});

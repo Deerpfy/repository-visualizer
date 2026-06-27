@@ -44,6 +44,9 @@
 		vsplit: document.getElementById("vsplit"),
 		modeGraph: document.getElementById("mode-graph"),
 		modeFlow: document.getElementById("mode-flow"),
+		flowSub: document.getElementById("flow-sub"),
+		flowFunctions: document.getElementById("flow-functions"),
+		flowModules: document.getElementById("flow-modules"),
 		fitGraph: document.getElementById("fit-graph"),
 		graphExpandAll: document.getElementById("graph-expand-all"),
 		refOverlay: document.getElementById("ref-overlay"),
@@ -149,14 +152,16 @@
 		updateGraph();
 	}
 
-	// ---- flow diagram (directed module graph from the shared engine) -----
+	// ---- flow diagram: function CODE FLOW (calls) or MODULE flow (imports) -----
 
 	let viewMode = "graph"; // "graph" (containment) | "flow" (directed)
-	let flowModel = null;
-	let flowDirty = true; // rebuild the model on the next Flow render / export
+	let flowSub = "functions"; // "functions" (call graph) | "modules" (import graph)
+	let importModel = null; // cached engine.buildModel result
+	let callModel = null; // cached engine.buildCallGraph result
+	let flowDirty = true; // rebuild on the next render / export
 
 	// Read the shallowest entry with a given basename (index.html / package.json) to
-	// seed entry points. Returns "" if absent or unreadable — analysis still proceeds.
+	// seed module entry points. Returns "" if absent or unreadable — analysis continues.
 	async function readNamed(name) {
 		const matches = state.entries.filter((e) => e.name.toLowerCase() === name);
 		if (!matches.length) return "";
@@ -164,47 +169,103 @@
 		try { return await RV.readText(matches[0]); } catch { return ""; }
 	}
 
-	// Build (and cache) the AnalysisModel from the current index. Reuses RV.readText so
-	// content is read lazily, exactly like the viewer/overlay.
-	async function buildFlowModel() {
-		if (flowModel && !flowDirty) return flowModel;
+	// Build (and cache) the MODULE import graph. Reuses RV.readText (lazy content read).
+	async function getImportModel() {
+		if (importModel && !flowDirty) return importModel;
 		if (!RV.engine || !RV.engine.buildModel) throw new Error("analysis engine (js/engine.js) failed to load");
 		if (!state.entries.length) return null;
 		const indexHtmlText = await readNamed("index.html");
 		let packageJson = null;
 		const pkgText = await readNamed("package.json");
 		if (pkgText) { try { packageJson = JSON.parse(pkgText); } catch { /* malformed package.json — ignore */ } }
-		const model = await RV.engine.buildModel({
+		importModel = await RV.engine.buildModel({
 			rootName: state.source.rootName || "repository",
 			entries: state.entries,
 			readText: RV.readText,
-			indexHtmlText,
-			packageJson,
-			includeNoise: false,
+			indexHtmlText, packageJson, includeNoise: false,
 			generatedAt: new Date().toISOString(),
 		});
-		flowModel = model;
-		flowDirty = false;
-		return model;
+		return importModel;
+	}
+
+	// Look for a CLI/API-generated accurate call-graph snapshot among the opened files
+	// (repo-map.json or callgraph.json). The browser can't run the .NET/Go/clang SDKs, so
+	// this is how a compiler-accurate graph (e.g. Roslyn for C#) is viewed offline.
+	async function loadCallGraphSnapshot() {
+		const cand = state.entries
+			.filter((e) => /(^|\/)(callgraph|repo-map)\.json$/i.test(e.path))
+			.sort((a, b) => a.path.split("/").length - b.path.split("/").length)[0];
+		if (!cand) return null;
+		try {
+			const j = JSON.parse(await RV.readText(cand));
+			const cg = j && (j.callGraph || (j.kind === "callgraph" ? j : null));
+			if (cg && cg.kind === "callgraph" && Array.isArray(cg.nodes)) return cg;
+		} catch { /* not a usable snapshot */ }
+		return null;
+	}
+
+	// Build (and cache) the FUNCTION call graph — the code flow. Prefers an accurate
+	// snapshot if one is present; otherwise computes the in-browser regex heuristic.
+	async function getCallModel() {
+		if (callModel && !flowDirty) return callModel;
+		if (!RV.engine || !RV.engine.buildCallGraph) throw new Error("analysis engine (js/engine.js) failed to load");
+		if (!state.entries.length) return null;
+		const snap = await loadCallGraphSnapshot();
+		if (snap) { callModel = snap; return snap; }
+		callModel = await RV.engine.buildCallGraph({
+			rootName: state.source.rootName || "repository",
+			entries: state.entries,
+			readText: RV.readText, includeNoise: false,
+			generatedAt: new Date().toISOString(),
+		});
+		return callModel;
 	}
 
 	async function renderFlow() {
 		if (!flow.available) { status("Flow diagram unavailable — vendor/vis-network.min.js missing.", "warn"); return; }
-		if (!state.entries.length) { status("Open a folder first to see the module flow.", "warn"); return; }
-		if (!flowDirty && flowModel) { flow.fit(); return; }
-		status("Analyzing module flow (reads file contents)…", "info", true);
+		if (!state.entries.length) { status("Open a folder first to see the flow.", "warn"); return; }
+		const isFn = flowSub === "functions";
+		status(`Analyzing ${isFn ? "function call flow" : "module flow"} (reads file contents)…`, "info", true);
 		await new Promise((r) => setTimeout(r, 0)); // let the busy status paint
 		try {
-			const model = await buildFlowModel();
+			const model = isFn ? await getCallModel() : await getImportModel();
+			flowDirty = false;
 			const st = flow.setModel(model) || {};
-			const cyc = model.cycles.length;
-			let msg = cyc ? `${cyc} import cycle(s) found — highlighted in red.` : "No import cycles — flow reads start → END.";
-			if (st.truncated) msg = `Showing the ${st.shown} most-connected of ${model.nodes.length} modules. ` + msg;
-			status(msg, cyc ? "warn" : "ok");
+			let msg, kind = "ok";
+			if (isFn) {
+				const c = model.metrics;
+				const prov = model.provider || "heuristic";
+				if (!c.functions) {
+					msg = "No functions detected — the call-flow analyzer supports JS/TS, Python, C#, Java and C/C++ (this folder may hold only data/markup).";
+					kind = "warn";
+				} else if (!c.calls || st.fellBack) {
+					msg = `${c.functions} function(s) found, but no calls resolved (best-effort static analysis can't follow interfaces / overloads / dynamic dispatch). Showing the functions.`;
+					kind = "warn";
+				} else {
+					msg = `Code flow [${prov}]: ${c.functions} functions, ${c.calls} calls` + (c.parallelCalls ? `, ${c.parallelCalls} parallel` : "") + (c.recursive ? `, ${c.recursive} recursive (red)` : "") + ".";
+				}
+			} else {
+				const cyc = model.cycles.length;
+				msg = cyc ? `${cyc} import cycle(s) found — highlighted in red.` : "No import cycles — flow reads start → END.";
+			}
+			if (st.truncated) msg = `Showing the ${st.shown} most-connected. ` + msg;
+			status(msg, kind);
 		} catch (err) {
 			status(`Flow analysis failed: ${err.message || err}`, "error");
 		}
 	}
+
+	function setFlowSub(sub) {
+		if (sub === flowSub) return;
+		flowSub = sub;
+		dom.flowFunctions?.classList.toggle("active", sub === "functions");
+		dom.flowModules?.classList.toggle("active", sub === "modules");
+		dom.flowFunctions?.setAttribute("aria-pressed", String(sub === "functions"));
+		dom.flowModules?.setAttribute("aria-pressed", String(sub === "modules"));
+		if (viewMode === "flow") renderFlow();
+	}
+	dom.flowFunctions?.addEventListener("click", () => setFlowSub("functions"));
+	dom.flowModules?.addEventListener("click", () => setFlowSub("modules"));
 
 	function setViewMode(mode) {
 		if (mode === viewMode) { (mode === "flow" ? flow : graph).available && (mode === "flow" ? flow : graph).fit(); return; }
@@ -212,6 +273,7 @@
 		const isFlow = mode === "flow";
 		dom.graphPanel.hidden = isFlow;
 		dom.flowPanel.hidden = !isFlow;
+		if (dom.flowSub) dom.flowSub.hidden = !isFlow; // sub-toggle only in Flow mode
 		dom.modeGraph?.classList.toggle("active", !isFlow);
 		dom.modeFlow?.classList.toggle("active", isFlow);
 		dom.modeGraph?.setAttribute("aria-pressed", String(!isFlow));
@@ -225,8 +287,8 @@
 	dom.modeGraph?.addEventListener("click", () => setViewMode("graph"));
 	dom.modeFlow?.addEventListener("click", () => setViewMode("flow"));
 
-	// A new index invalidates the cached model; rebuild if Flow is currently showing.
-	on(EV.INDEX, () => { flowDirty = true; flowModel = null; if (viewMode === "flow") renderFlow(); });
+	// A new index invalidates both cached models; rebuild if Flow is currently showing.
+	on(EV.INDEX, () => { flowDirty = true; importModel = null; callModel = null; if (viewMode === "flow") renderFlow(); });
 
 	// ---- extension facet chips -------------------------------------------
 
@@ -423,13 +485,15 @@
 		if (!state.entries.length) { status("Open a folder before exporting the map.", "warn"); return; }
 		if (!exportRepoMap) { status("Map export unavailable — js/flowexport.js failed to load.", "warn"); return; }
 		try {
-			status("Building repository map…", "info", true);
+			status("Building repository map (module + code flow)…", "info", true);
 			await new Promise((r) => setTimeout(r, 0));
-			const model = await buildFlowModel();
+			const model = await getImportModel();
 			if (!model) { status("Nothing to export yet.", "warn"); return; }
+			const callGraph = await getCallModel(); // include the function code flow
 			const msg = await exportRepoMap(model, {
 				title: `Repository map — ${state.source.rootName || "repository"}`,
 				suggestedName: "repo-map.md",
+				callGraph,
 			}, (m) => status(m, "info", true));
 			status(msg, "ok");
 		} catch (err) {

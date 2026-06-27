@@ -69,19 +69,19 @@ async function main() {
 	// Logs + summary go to stderr when Markdown is streamed to stdout, else stdout.
 	const sink = flags.stdout ? console.error : console.log;
 
-	const { model } = await analyze(input, {
+	const { model, callGraph } = await analyze(input, {
 		includeNoise: flags.includeNoise,
 		generatedAt: new Date().toISOString(),
 	}, (m) => console.error(m));
 
-	const md = buildMarkdownMap(model, { title: `Repository map — ${model.root}` });
+	const md = buildMarkdownMap(model, { title: `Repository map — ${model.root}` }, callGraph);
 
 	if (mdPath) { await writeFileEnsured(mdPath, md); sink(`Wrote ${path.relative(process.cwd(), mdPath) || mdPath}`); }
-	if (jsonPath) { await writeFileEnsured(jsonPath, JSON.stringify(model, null, 2)); sink(`Wrote ${path.relative(process.cwd(), jsonPath) || jsonPath}`); }
+	if (jsonPath) { await writeFileEnsured(jsonPath, JSON.stringify({ model, callGraph }, null, 2)); sink(`Wrote ${path.relative(process.cwd(), jsonPath) || jsonPath}`); }
 	if (flags.stdout) process.stdout.write(md + "\n");
 
-	const m = model.metrics;
-	sink(`Analyzed "${model.root}": ${m.files} files, ${m.edges} edges, ${m.entryCount} entries, ${m.terminalCount} terminals, ${m.cycleCount} cycles.`);
+	const m = model.metrics, c = callGraph.metrics;
+	sink(`Analyzed "${model.root}": ${m.files} files, ${m.edges} import edges, ${m.cycleCount} import cycles | code flow [${callGraph.provider}]: ${c.functions} functions, ${c.calls} calls (${c.parallelCalls} parallel), ${c.recursive} recursive.`);
 }
 
 main().catch((err) => { console.error("Error:", err.message || err); process.exit(1); });

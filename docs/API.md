@@ -1,15 +1,14 @@
 # Repository Visualizer — Analysis API reference
 
-The directed module-flow analysis exposes **three surfaces over one shared engine**. The
+The directed module-flow analysis exposes **two surfaces over one shared engine**. The
 engine (`js/engine.js`) and the Markdown builder (`js/mapmd.js`) are the **single source of
-truth**; the browser views, the CLI (`scripts/repo-analyze.js`) and the HTTP server
-(`scripts/api-server.js`) all consume them.
+truth**; the browser views and the CLI (`scripts/repo-analyze.js`) both consume them. There
+is **no server** — the browser app runs entirely offline.
 
 - [Engine API](#engine-api) — `RV.engine.*` in the browser, `require("./js/engine.js")` in Node
 - [The AnalysisModel](#the-analysismodel) — the shape every surface returns
 - [Markdown builder](#markdown-builder) — `RV.buildMarkdownMap` / `require("./js/mapmd.js")`
 - [CLI](#cli) — `scripts/repo-analyze.js`
-- [HTTP API](#http-api) — `scripts/api-server.js`
 - [Security](#security)
 
 ---
@@ -58,6 +57,55 @@ console.log(model.metrics.cycleCount); // 1  (a ↔ b)
 | `resolveRef(target, fromPath, files)` | `→ resolvedPath \| null` | Resolves a specifier against the file list (relative `./..` with extension/`index.*` guessing, plus suffix/basename matches). `files` is any array of `{ path }`. |
 | `normalizePath(path)` | `(string) → string` | Collapses `.` / `..` segments. |
 | `isNoiseSegment(name)` | `(string) → boolean` | True for a default-hidden directory name (the Node walker reuses this). |
+
+### `buildCallGraph(options) → Promise<CallGraph>` — the function CODE FLOW
+
+Same `{ rootName, entries, readText, includeNoise?, sizeCap?, generatedAt? }` inputs as
+`buildModel`. Best-effort (regex + brace matching, like `parseRefs`): it finds function
+definitions (named/arrow/method, plus Python `def`) and the calls inside each body, then
+links **caller → callee**. Resolution is conservative — a call resolves to a function in
+the **same file**, else to a project-wide **uniquely-named** function, else it is external
+(no edge); built-in methods (`push`, `map`, `get`, …) are never resolved. Series vs
+parallel is heuristic: calls inside `Promise.all`/`allSettled`/`race` or `parallel(...)`
+are flagged `parallel`. Recursion (self + mutual, via the same SCC pass) is detected.
+
+```jsonc
+{
+  "root": "demo", "generatedAt": "…", "kind": "callgraph",
+  "provider": "heuristic",            // "heuristic" | "roslyn" | "mixed (roslyn + heuristic)"
+  "nodes": [ { "id": "demo/m.js::run#5", "file": "demo/m.js", "name": "run", "kind": "function",
+               "line": 5, "inDeg": 0, "outDeg": 3, "role": "entry" } ],   // role: entry|leaf|cycle|module|normal
+  "edges": [ { "from": "demo/m.js::run#5", "to": "demo/m.js::worker#3", "file": "demo/m.js",
+               "parallel": true, "self": false, "via": "call", "inCycle": false } ],   // via: call|dispatch|event|new
+  "cycles": [ { "members": ["demo/m.js::loop#9"], "self": true } ],       // recursion groups
+  "metrics": { "files": 1, "functions": 5, "nodes": 5, "calls": 4, "parallelCalls": 2, "recursive": 1, "maxFanOut": 3 }
+}
+```
+
+A synthetic `file::<module>` node (kind `module`) carries calls made by a file's top-level
+body. `buildMarkdownMap(model, meta, callGraph)` renders this as the headline **Function
+call flow** section (Mermaid: solid = series, dashed `parallel` / `recurses` / `virtual`
+(dispatch) / `event`). The in-browser **Flow → Functions** toggle renders the same graph.
+
+### Compiler-accurate language providers
+
+The heuristic above is pure-JS and always available (incl. the browser). For real type
+resolution, the Node CLI/API delegate supported languages to the language's own compiler
+front-end and merge the result via `finalizeCallGraph` (same shape). The browser app stays
+dependency-free; providers run only in the Node layer when the SDK is present.
+
+| Language | Provider | Needs | Follows |
+|----------|----------|-------|---------|
+| C# | `tools/CSharpCallGraph` (Roslyn) via `scripts/providers/csharp.js` | .NET SDK (`dotnet`) | virtual & interface dispatch, overrides, events (`+=`/`Invoke`), constructors, `Task.WhenAll`/`Parallel.*` |
+| Go / Python / C++ | (architecture in place; not yet shipped) | go / python / clang | — |
+
+Selection is automatic: a C# project analyzed with `dotnet` present → `provider: "roslyn"`
+(or `"mixed (roslyn + heuristic)"` alongside other languages); otherwise `"heuristic"`. The
+first C# run does a one-time `dotnet restore`/`build` of the analyzer tool. Edges carry a
+`via` tag (`call` / `dispatch` / `event` / `new`) so dispatch targets and event handlers are
+visible. To view the accurate graph in the browser (which can't run SDKs), generate a JSON
+snapshot with the CLI and open the folder — **Flow → Functions** loads `repo-map.json` /
+`callgraph.json` if present.
 
 ---
 
@@ -152,87 +200,13 @@ Analyzed "repository-visualizer": 29 files, 7 edges, 21 entries, 0 terminals, 0 
 
 ---
 
-## HTTP API
-
-`scripts/api-server.js` — Node built-in `http` only. **Binds to `127.0.0.1` exclusively.**
-
-```bash
-node scripts/api-server.js [--port 4317] [--root <allowed-local-root>]
-# PORT and REPO_ROOT env vars are also honored.
-```
-
-### `GET /api/health`
-
-```bash
-curl http://127.0.0.1:4317/api/health
-```
-```json
-{ "ok": true, "name": "repository-visualizer", "version": "1.2.0" }
-```
-
-### `POST /api/analyze` — `{ repo, includeNoise? }` → full `AnalysisModel`
-
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{"repo":"."}' \
-     http://127.0.0.1:4317/api/analyze
-```
-```jsonc
-// { "root": "...", "nodes": [...], "edges": [...], "entries": [...],
-//   "terminals": [...], "cycles": [...], "layers": [...], "metrics": {...} }
-```
-
-### `GET /api/flow?repo=…` → flow summary
-
-```bash
-curl "http://127.0.0.1:4317/api/flow?repo=."
-```
-```jsonc
-// { "root": "...", "generatedAt": "...", "entries": [...], "terminals": [...],
-//   "cycles": [...], "layers": [...], "orphans": [...], "metrics": {...} }
-```
-
-### `GET /api/graph?repo=…&mode=flow|containment` → `{ nodes, edges }`
-
-`mode=flow` returns the directed model graph; `mode=containment` returns the folder→child
-tree (built directly from the file list).
-
-```bash
-curl "http://127.0.0.1:4317/api/graph?repo=.&mode=flow"
-curl "http://127.0.0.1:4317/api/graph?repo=.&mode=containment"
-```
-
-### `GET /api/export?repo=…&format=md|json[&write=1]`
-
-Returns the Markdown map (`format=md`) or the JSON model (`format=json`). With `write=1`
-the server also writes `docs/repo-map.md` (or `docs/repo-map.json`) and reports the path.
-
-```bash
-curl "http://127.0.0.1:4317/api/export?repo=.&format=md"            # → Markdown text
-curl "http://127.0.0.1:4317/api/export?repo=.&format=md&write=1"    # → { "written": "docs/repo-map.md" }
-```
-
-### `GET /` (and any non-`/api/` path) — static UI
-
-Serves the visualizer (`index.html`, `app.css`, `js/`, `vendor/`, …) from the project root,
-with a path-traversal guard. Lets you open the full UI at `http://127.0.0.1:4317/`.
-
-### Errors
-
-`400` invalid/missing parameters · `403` local `repo` outside the allowed root, or static
-traversal · `404` unknown endpoint / missing file · `405` wrong method · `413` request body
-over 256 KB. API errors are JSON `{ "error": "…" }`.
-
----
-
 ## Security
 
-- The HTTP server binds to **`127.0.0.1` only** — never `0.0.0.0`, no open CORS.
-- `repo` is validated: local paths must resolve **under the allowed root**; only
-  `http(s)`/git URLs are treated as remote (a bare `owner/repo` is treated as a local path,
-  never auto-cloned).
-- `git` is invoked via `execFile` with an **argument array**, never a shell string. File
-  content is **never executed** (no `eval`). GitHub tokens are read from `GITHUB_TOKEN` /
-  `GH_TOKEN` env vars only and are never written to a committed file.
-- The analysis treats all file content as untrusted and is read-only except for the
-  explicit `--md`/`--json` / `write=1` outputs, which only ever target the project `docs/`
-  (or an explicit absolute path on the CLI).
+- **No server, no network listener.** The browser app is fully offline; the CLI is a local
+  process. The only outbound network use is the opt-in GitHub loader (`api.github.com` /
+  `raw.githubusercontent.com`).
+- `git` and the optional C# analyzer (`dotnet`) are invoked via `execFile` with an **argument
+  array**, never a shell string. File content is **never executed** (no `eval`). GitHub tokens
+  are read from `GITHUB_TOKEN` / `GH_TOKEN` env vars only and never written to a committed file.
+- The analysis treats all file content as untrusted and is read-only except for the explicit
+  `--md` / `--json` CLI outputs, which resolve under the project (or an explicit absolute path).

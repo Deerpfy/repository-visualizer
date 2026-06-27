@@ -1,72 +1,120 @@
 /* app.css — Repository Visualizer. Self-contained, no web fonts, no remote assets.
-   Theming via CSS custom properties switched by [data-theme] on <html>. */
+   Theming via CSS custom properties switched by [data-theme] on <html>.
 
-/* ----------------------------- theme tokens ----------------------------- */
+   Visual language: refined, quiet, precise. No gradients-as-decoration, no glow,
+   no drop shadows, no emoji. Structure is expressed with hairline borders, an
+   elevation token, a consistent spacing rhythm and restrained typographic weight.
+   Brand accent (blue) is unchanged; it is used sparingly for state, never fill. */
+
+/* ----------------------------- design tokens ----------------------------- */
 :root {
 	--sidebar-w: 340px;
 	--row-h: 24px;
-	--radius: 7px;
+
+	/* radii */
+	--radius: 8px;
+	--radius-sm: 6px;
+	--radius-pill: 999px;
+
+	/* spacing rhythm (dense tool scale) */
+	--sp-1: 4px;
+	--sp-2: 6px;
+	--sp-3: 8px;
+	--sp-4: 12px;
+	--sp-5: 16px;
+	--sp-6: 20px;
+	--sp-7: 28px;
+
+	/* touch target floor (used on mobile) */
+	--tap: 44px;
+
+	/* motion */
+	--ease: cubic-bezier(0.32, 0.72, 0, 1);
+	--dur-1: 120ms;
+	--dur-2: 200ms;
+	--dur-3: 320ms;
+
 	--mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
 	--sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+	/* Line-art glyph for empty states (masked, so it tints with the theme). */
+	--glyph-doc: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 3h6l5 5v12a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z'/%3E%3Cpath d='M12.5 3v5h5'/%3E%3Cpath d='M8.5 12.5h7M8.5 15.5h7M8.5 18h4'/%3E%3C/svg%3E");
 }
 
 html[data-theme="dark"] {
-	--bg: #0f1115;
-	--bg-elev: #161922;
-	--panel: #12141a;
-	--border: #262b36;
-	--text: #e6e8ee;
-	--text-muted: #8b93a3;
+	/* Three deliberate depth steps: bg (recessed canvas) < panel (surfaces) < elev (chrome). */
+	--bg: #0a0c10;
+	--bg-elev: #181c26;
+	--panel: #0e1116;
+	--border: #272d3a;
+	--border-soft: #191e28;
+	--text: #eaecf2;
+	--text-muted: #888fa1;
 	--accent: #4aa3ff;
-	--accent-contrast: #06223f;
-	--chip-bg: #1c212c;
+	--accent-strong: #69b4ff;
+	--accent-contrast: #04203c;
+	--accent-soft: rgba(74, 163, 255, 0.13);
+	--accent-ring: rgba(74, 163, 255, 0.45);
+	--chip-bg: #1b212e;
 	--chip-active: #1d4e7a;
-	--row-hover: #1a1f29;
-	--row-selected: #213049;
-	--code-bg: #0d1117;
+	--row-hover: #161b25;
+	--row-selected: #1b2a45;
+	--code-bg: #0c1015;
 	--code-text: #c9d1d9;
-	--graph-bg: #0c0e12;
+	--graph-bg: #0b0d11;
 	--graph-edge: #3a4150;
 	--graph-font: #cfd6e4;
 	--graph-ref: #ff6b81;
-	/* Flow diagram role colours (entry=START, terminal=END, cycle, normal node). */
+	/* Flow diagram role colours (entry=START, terminal/leaf=END, cycle, module, node). */
 	--flow-entry: #1f6feb;
 	--flow-terminal: #2ea043;
 	--flow-cycle: #ff6b81;
 	--flow-node: #39414f;
-	--warn-bg: #3a2a12;
-	--warn-border: #7a5a1e;
-	--shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+	--flow-module: #8957e5;
+	--warn-bg: #2c2410;
+	--warn-border: #6f5520;
+	--warn-text: #e8c879;
+	--ok: #54d18b;
+	--warn: #e6b25a;
+	--error: #ff7287;
 	color-scheme: dark;
 }
 
 html[data-theme="light"] {
-	--bg: #f4f6fa;
+	--bg: #f5f7fb;
 	--bg-elev: #ffffff;
 	--panel: #ffffff;
 	--border: #d8dee8;
-	--text: #1b2230;
+	--border-soft: #e7ebf2;
+	--text: #161c28;
 	--text-muted: #5c6675;
 	--accent: #1f6feb;
+	--accent-strong: #1a63d6;
 	--accent-contrast: #ffffff;
+	--accent-soft: rgba(31, 111, 235, 0.10);
+	--accent-ring: rgba(31, 111, 235, 0.35);
 	--chip-bg: #eef1f6;
 	--chip-active: #cfe2ff;
-	--row-hover: #eef2f8;
-	--row-selected: #d4e4ff;
+	--row-hover: #eef2f9;
+	--row-selected: #d8e6ff;
 	--code-bg: #f6f8fa;
 	--code-text: #24292f;
 	--graph-bg: #f7f9fc;
 	--graph-edge: #c2cad6;
 	--graph-font: #2b3340;
 	--graph-ref: #d22b48;
-	/* Flow diagram role colours (entry=START, terminal=END, cycle, normal node). */
+	/* Flow diagram role colours (entry=START, terminal/leaf=END, cycle, module, node). */
 	--flow-entry: #1f6feb;
 	--flow-terminal: #2ea043;
 	--flow-cycle: #d22b48;
 	--flow-node: #8a93a3;
-	--warn-bg: #fff5d6;
+	--flow-module: #8957e5;
+	--warn-bg: #fff6da;
 	--warn-border: #e3c45a;
-	--shadow: 0 6px 20px rgba(20, 30, 50, 0.15);
+	--warn-text: #6b5413;
+	--ok: #1a8f53;
+	--warn: #9a6a13;
+	--error: #cf2c44;
 	color-scheme: light;
 }
 
@@ -76,9 +124,12 @@ html, body { height: 100%; margin: 0; }
 body {
 	font-family: var(--sans);
 	font-size: 13px;
+	line-height: 1.5;
 	color: var(--text);
 	background: var(--bg);
 	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	-webkit-tap-highlight-color: transparent;
 }
 .muted { color: var(--text-muted); }
 
@@ -92,8 +143,33 @@ body {
 		"sidebar main"
 		"status status";
 	height: 100vh;
+	height: 100dvh; /* progressive: tracks the visible viewport on mobile chrome */
 	overflow: hidden;
 }
+
+/* Shared focus ring — visible, consistent, never removed without a replacement. */
+:where(.btn, .seg-btn, .chip, .tab, .select, input, summary):focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Skip link — off-screen until it takes keyboard focus, then slides into the
+   top-left. Reuses the brand accent; no shadow. */
+.skip-link {
+	position: fixed;
+	top: var(--sp-2);
+	left: var(--sp-2);
+	z-index: 100;
+	padding: 8px 14px;
+	background: var(--accent);
+	color: var(--accent-contrast);
+	border-radius: var(--radius-sm);
+	font-weight: 600;
+	text-decoration: none;
+	transform: translateY(calc(-100% - var(--sp-4)));
+	transition: transform var(--dur-2) var(--ease);
+}
+.skip-link:focus { transform: translateY(0); outline: 2px solid var(--accent-contrast); outline-offset: 2px; }
 
 /* ----------------------------- topbar ----------------------------- */
 .topbar {
@@ -101,138 +177,211 @@ body {
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
-	gap: 6px 8px;
-	padding: 8px 12px;
+	gap: var(--sp-2) var(--sp-3);
+	padding: 9px var(--sp-5);
+	padding-top: max(9px, env(safe-area-inset-top));
+	padding-left: max(var(--sp-5), env(safe-area-inset-left));
+	padding-right: max(var(--sp-5), env(safe-area-inset-right));
 	background: var(--bg-elev);
 	border-bottom: 1px solid var(--border);
 }
-.topbar .brand { font-weight: 650; letter-spacing: 0.2px; }
-.topbar .spacer { flex: 1 1 auto; min-width: 8px; }
-.tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
+.topbar .brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-weight: 640;
+	font-size: 14.5px;
+	letter-spacing: -0.02em;
+	color: var(--text);
+	white-space: nowrap;
+	margin-right: var(--sp-2);
+}
+/* Brand mark sits in a tinted rounded chip — reads as a product app-icon. */
+.topbar .brand .brand-mark {
+	color: var(--accent);
+	flex: 0 0 auto;
+	box-sizing: content-box;
+	padding: 5px;
+	border-radius: 8px;
+	background: var(--accent-soft);
+}
+/* The brand text is the page's single <h1>; strip the UA heading box so it
+   reads exactly like the surrounding chrome. */
+.topbar .brand .brand-title { font: inherit; margin: 0; }
+.topbar .spacer { flex: 1 1 auto; min-width: var(--sp-3); }
+.tb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px; }
 .tb-field { display: inline-flex; align-items: center; }
+
+/* The secondary-controls wrapper is layout-transparent on desktop: its children
+   flow into the topbar exactly as before. On mobile it becomes a bottom sheet. */
+.tb-tools { display: contents; }
+.tb-tools-head { display: none; }       /* sheet chrome — only rendered on mobile */
+.tb-tools-toggle { display: none; }      /* "Tools" trigger — only rendered on mobile */
+
 .select {
 	font: inherit;
 	font-size: 12px;
 	color: var(--text);
 	background: var(--bg-elev);
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 4px 6px;
+	border-radius: var(--radius-sm);
+	padding: 5px 8px;
 	cursor: pointer;
+	transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
 }
-.select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.select:hover { border-color: var(--accent); }
 
 .btn {
 	font: inherit;
+	font-weight: 500;
 	color: var(--text);
 	background: var(--bg-elev);
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 5px 10px;
+	border-radius: var(--radius-sm);
+	padding: 6px 11px;
 	cursor: pointer;
 	white-space: nowrap;
-	transition: background 0.12s, border-color 0.12s;
+	transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
 }
 .btn:hover { background: var(--row-hover); border-color: var(--accent); }
 .btn:active { transform: translateY(1px); }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.08); }
-.btn.small { padding: 3px 8px; font-size: 12px; }
+.btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn.small { padding: 4px 9px; font-size: 12px; }
 
 .toggle {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: var(--sp-2);
 	cursor: pointer;
 	user-select: none;
 	color: var(--text-muted);
 	font-size: 12px;
+	transition: color var(--dur-1) var(--ease);
 }
-.toggle input { accent-color: var(--accent); }
+.toggle:hover { color: var(--text); }
+.toggle input { accent-color: var(--accent); width: 14px; height: 14px; }
 
-/* Segmented control: Graph / Flow diagram mode switch. */
-.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+/* Segmented control: inset track with a floating active pill. */
+.seg {
+	display: inline-flex;
+	gap: 2px;
+	padding: 2px;
+	background: var(--chip-bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
 .seg-btn {
 	font: inherit;
 	font-size: 12px;
+	font-weight: 500;
 	color: var(--text-muted);
-	background: var(--bg-elev);
+	background: transparent;
 	border: none;
-	border-right: 1px solid var(--border);
-	padding: 5px 11px;
+	border-radius: calc(var(--radius) - 3px);
+	padding: 5px 12px;
 	cursor: pointer;
-	transition: background 0.12s, color 0.12s;
+	transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.seg-btn:last-child { border-right: none; }
-.seg-btn:hover { background: var(--row-hover); color: var(--text); }
+.seg-btn:hover:not(.active) { background: var(--row-hover); color: var(--text); }
 .seg-btn.active { background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
 .seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg[hidden] { display: none !important; } /* flow-content sub-toggle, only shown in Flow mode */
 
 /* ----------------------------- vendor warning ----------------------------- */
 .vendor-warning {
 	grid-area: warning;
-	padding: 7px 12px;
+	padding: var(--sp-3) var(--sp-4);
 	background: var(--warn-bg);
 	border-bottom: 1px solid var(--warn-border);
+	color: var(--warn-text);
 	font-size: 12px;
 }
 .vendor-warning code { font-family: var(--mono); }
+.vendor-warning .vw-ico { vertical-align: -3px; margin-right: 5px; }
 
 /* ----------------------------- sidebar ----------------------------- */
 .sidebar {
 	grid-area: sidebar;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	padding: 10px;
+	gap: var(--sp-3);
+	padding: var(--sp-4);
+	padding-left: max(var(--sp-4), env(safe-area-inset-left));
 	background: var(--panel);
 	border-right: 1px solid var(--border);
 	min-height: 0;
 	overflow: hidden;
 }
-.source { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.source { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 .source .btn { flex: 0 0 auto; }
-.source-label { flex-basis: 100%; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-label { flex-basis: 100%; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.source-remote { display: flex; flex-direction: column; gap: 5px; }
-.remote-row { display: flex; gap: 6px; }
+.source-remote { display: flex; flex-direction: column; gap: var(--sp-2); }
+.remote-row { display: flex; gap: var(--sp-2); }
 #repo-url {
 	flex: 1; min-width: 0; font: inherit; color: var(--text);
-	background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 9px;
+	background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px;
+	transition: border-color var(--dur-1) var(--ease);
 }
-#repo-url:focus-visible { outline: 2px solid var(--accent); border-color: var(--accent); }
+#repo-url::placeholder, #filter::placeholder, #gh-token::placeholder { color: var(--text-muted); }
+#repo-url:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
 .remote-token { font-size: 12px; }
-.remote-token > summary { cursor: pointer; color: var(--text-muted); padding: 1px 0; user-select: none; }
-.remote-token-body { display: flex; flex-direction: column; gap: 5px; padding-top: 5px; }
+.remote-token > summary {
+	cursor: pointer; color: var(--text-muted); padding: 3px 0; user-select: none;
+	list-style: none; display: inline-flex; align-items: center; gap: 5px;
+	transition: color var(--dur-1) var(--ease);
+}
+.remote-token > summary:hover { color: var(--text); }
+.remote-token > summary::-webkit-details-marker { display: none; }
+.remote-token > summary::before {
+	content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+	transform: rotate(-45deg); transition: transform var(--dur-1) var(--ease); display: inline-block;
+}
+.remote-token[open] > summary::before { transform: rotate(45deg); }
+.remote-token-body { display: flex; flex-direction: column; gap: var(--sp-2); padding-top: var(--sp-2); }
 #gh-token {
 	font: inherit; color: var(--text); background: var(--bg);
-	border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
+	border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px;
+	transition: border-color var(--dur-1) var(--ease);
 }
-.remote-token-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.remote-hint { font-size: 11px; line-height: 1.4; margin: 0; }
+#gh-token:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.remote-token-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.remote-hint { font-size: 11px; line-height: 1.45; margin: 0; }
 
-.filter-row { display: flex; align-items: center; gap: 8px; }
+.filter-row { display: flex; align-items: center; gap: var(--sp-3); }
 #filter {
 	flex: 1;
 	font: inherit;
 	color: var(--text);
 	background: var(--bg);
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 6px 9px;
+	border-radius: var(--radius-sm);
+	padding: 7px 10px;
+	transition: border-color var(--dur-1) var(--ease);
 }
 #filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
-#match-count { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#match-count { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .noise { font-size: 12px; }
-.noise > summary { cursor: pointer; color: var(--text-muted); padding: 2px 0; user-select: none; }
-.noise-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; padding: 4px 0 2px; }
+.noise > summary {
+	cursor: pointer; color: var(--text-muted); padding: 3px 0; user-select: none;
+	list-style: none; display: inline-flex; align-items: center; gap: 5px; font-weight: 500;
+	transition: color var(--dur-1) var(--ease);
+}
+.noise > summary:hover { color: var(--text); }
+.noise > summary::-webkit-details-marker { display: none; }
+.noise > summary::before {
+	content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+	transform: rotate(-45deg); transition: transform var(--dur-1) var(--ease); display: inline-block;
+}
+.noise[open] > summary::before { transform: rotate(45deg); }
+.noise-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-1) var(--sp-4); padding: var(--sp-2) 0; }
 
 .ext-chips {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 4px;
+	gap: var(--sp-1);
 	max-height: 96px;
 	overflow-y: auto;
 	padding: 2px;
@@ -240,18 +389,19 @@ body {
 .chip {
 	font: inherit;
 	font-size: 11px;
-	color: var(--text);
+	color: var(--text-muted);
 	background: var(--chip-bg);
 	border: 1px solid transparent;
-	border-radius: 999px;
-	padding: 2px 8px;
+	border-radius: var(--radius-pill);
+	padding: 3px 9px;
 	cursor: pointer;
 	font-variant-numeric: tabular-nums;
+	transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.chip:hover { border-color: var(--accent); }
-.chip.active { background: var(--chip-active); border-color: var(--accent); }
+.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); font-weight: 600; }
 
-.list-actions { display: flex; gap: 6px; }
+.list-actions { display: flex; gap: var(--sp-2); }
 
 /* ----------------------------- file list (virtualized) ----------------------------- */
 .file-list { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
@@ -263,12 +413,13 @@ body {
 .row {
 	display: flex;
 	align-items: center;
-	gap: 5px;
-	padding-right: 8px;
+	gap: var(--sp-2);
+	padding-right: var(--sp-3);
 	cursor: pointer;
 	white-space: nowrap;
 	font-size: 12.5px;
-	border-left: 2px solid transparent;
+	border-left: 3px solid transparent;
+	transition: background var(--dur-1) var(--ease);
 }
 .row:hover { background: var(--row-hover); }
 .row.selected { background: var(--row-selected); border-left-color: var(--accent); }
@@ -276,33 +427,60 @@ body {
 .row .twisty { width: 12px; text-align: center; color: var(--text-muted); flex: 0 0 auto; font-size: 10px; }
 .row .dot { flex: 0 0 auto; font-size: 10px; line-height: 1; }
 .row .label { overflow: hidden; text-overflow: ellipsis; }
-.row .meta { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; padding-left: 8px; }
+.row .meta { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; padding-left: var(--sp-3); }
 
 /* ----------------------------- main (graph + viewer) ----------------------------- */
 .main { grid-area: main; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.main:focus { outline: none; } /* skip-link target; focus lands here without a full-panel ring */
 .graph-panel { flex: 1 1 0; min-height: 120px; background: var(--graph-bg); position: relative; }
 .graph-panel[hidden] { display: none !important; } /* the inactive Graph/Flow panel */
 .viewer-panel { flex: 1 1 0; min-height: 120px; background: var(--panel); border-top: 1px solid var(--border); overflow: hidden; }
-.vsplit { flex: 0 0 8px; cursor: row-resize; background: var(--border); position: relative; }
-.vsplit::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 2px; background: var(--text-muted); border-radius: 2px; opacity: 0.6; }
+.vsplit { flex: 0 0 8px; cursor: row-resize; background: var(--border-soft); position: relative; transition: background var(--dur-1) var(--ease); }
+.vsplit::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 3px; background: var(--text-muted); border-radius: var(--radius-pill); opacity: 0.5; transition: opacity var(--dur-1) var(--ease); }
 .vsplit:hover { background: var(--accent); }
+.vsplit:hover::after { opacity: 0; }
 
-.panel-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); padding: 20px; text-align: center; }
+/* Designed empty state: a quiet masked glyph above the message (the big empty
+   panels are the most-seen surface before a repo is loaded). */
+.panel-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 16px;
+	height: 100%;
+	padding: var(--sp-6);
+	text-align: center;
+	color: var(--text-muted);
+	font-size: 14px;
+	letter-spacing: 0.005em;
+	max-width: 42ch;
+	margin: 0 auto;
+}
+.panel-empty::before {
+	content: "";
+	width: 48px;
+	height: 48px;
+	background-color: var(--text-muted);
+	-webkit-mask: center / contain no-repeat var(--glyph-doc);
+	mask: center / contain no-repeat var(--glyph-doc);
+	opacity: 0.5;
+}
 
-/* graph tooltip (custom, safe) */
+/* graph tooltip (custom, safe). Floats over the canvas — separated by a solid
+   elevated background + hairline border (no drop shadow). */
 .graph-tip {
 	position: absolute;
 	z-index: 20;
 	pointer-events: none;
 	max-width: 60ch;
-	padding: 3px 7px;
+	padding: 4px 8px;
 	font-family: var(--mono);
 	font-size: 11px;
 	color: var(--text);
 	background: var(--bg-elev);
 	border: 1px solid var(--border);
-	border-radius: 5px;
-	box-shadow: var(--shadow);
+	border-radius: var(--radius-sm);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -314,46 +492,47 @@ body {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 10px;
-	padding: 7px 12px;
+	gap: var(--sp-4);
+	padding: var(--sp-3) var(--sp-4);
 	border-bottom: 1px solid var(--border);
 	background: var(--bg-elev);
 	flex: 0 0 auto;
 }
 .viewer-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-title .name { font-weight: 600; }
-.viewer-title .path { font-size: 12px; }
-.viewer-header-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.viewer-title .path { font-size: 12px; color: var(--text-muted); }
+.viewer-header-right { display: flex; align-items: center; gap: var(--sp-3); flex: 0 0 auto; }
 .viewer-meta { display: flex; gap: 5px; }
-.vchip { font-size: 11px; color: var(--text-muted); background: var(--chip-bg); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.vchip { font-size: 11px; color: var(--text-muted); background: var(--chip-bg); border-radius: var(--radius-sm); padding: 2px 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .viewer-body { flex: 1; min-height: 0; overflow: auto; padding: 0; outline: none; }
-.viewer-note { padding: 6px 12px; font-size: 12px; }
+.viewer-note { padding: var(--sp-2) var(--sp-4); font-size: 12px; color: var(--text-muted); }
 
-pre.code { margin: 0; padding: 12px; overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; background: var(--code-bg); color: var(--code-text); min-height: 100%; }
+pre.code { margin: 0; padding: var(--sp-4); overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--code-bg); color: var(--code-text); min-height: 100%; }
 pre.code code { font-family: inherit; white-space: pre; }
 pre.code code.hljs { padding: 0; background: transparent; }
 
-.image-wrap { display: flex; align-items: center; justify-content: center; padding: 18px; min-height: 100%; }
+.image-wrap { display: flex; align-items: center; justify-content: center; padding: var(--sp-6); min-height: 100%; }
+/* The conic pattern is a functional transparency checkerboard (not decoration). */
 .image-wrap img, .image-wrap.svg svg { max-width: 100%; max-height: 80vh; height: auto; background:
 		repeating-conic-gradient(#80808022 0% 25%, transparent 0% 50%) 50% / 20px 20px; border: 1px solid var(--border); }
 
-.meta-panel { padding: 20px; max-width: 640px; }
-.meta-panel h3 { margin: 0 0 10px; }
-.meta-table { border-collapse: collapse; margin: 10px 0 16px; width: 100%; }
+.meta-panel { padding: var(--sp-6); max-width: 640px; }
+.meta-panel h3 { margin: 0 0 var(--sp-4); font-size: 1.05rem; }
+.meta-table { border-collapse: collapse; margin: var(--sp-4) 0 var(--sp-5); width: 100%; }
 .meta-table th, .meta-table td { text-align: left; vertical-align: top; padding: 4px 10px 4px 0; font-size: 12.5px; }
 .meta-table th { color: var(--text-muted); font-weight: 500; white-space: nowrap; width: 1%; }
 .meta-table td { font-family: var(--mono); word-break: break-all; }
 
 /* ----------------------------- markdown ----------------------------- */
-.md { padding: 18px 22px; max-width: 920px; line-height: 1.6; }
-.md h1, .md h2, .md h3, .md h4 { line-height: 1.25; margin: 1.2em 0 0.5em; }
+.md { padding: var(--sp-5) 22px; max-width: 920px; line-height: 1.65; }
+.md h1, .md h2, .md h3, .md h4 { line-height: 1.25; margin: 1.2em 0 0.5em; letter-spacing: -0.01em; }
 .md h1 { font-size: 1.7em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
 .md h2 { font-size: 1.4em; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
 .md h3 { font-size: 1.2em; }
 .md p, .md ul, .md ol, .md blockquote, .md table { margin: 0.6em 0; }
-.md a { color: var(--accent); }
-.md code { font-family: var(--mono); font-size: 0.9em; background: var(--chip-bg); padding: 0.12em 0.4em; border-radius: 4px; }
-.md pre { background: var(--code-bg); color: var(--code-text); padding: 12px; border-radius: var(--radius); overflow: auto; }
+.md a { color: var(--accent); text-underline-offset: 2px; }
+.md code { font-family: var(--mono); font-size: 0.9em; background: var(--chip-bg); padding: 0.12em 0.4em; border-radius: var(--radius-sm); }
+.md pre { background: var(--code-bg); color: var(--code-text); padding: var(--sp-4); border-radius: var(--radius); overflow: auto; }
 .md pre code { background: transparent; padding: 0; }
 .md blockquote { border-left: 3px solid var(--border); margin-left: 0; padding-left: 1em; color: var(--text-muted); }
 .md table { border-collapse: collapse; }
@@ -365,7 +544,12 @@ pre.code code.hljs { padding: 0; background: transparent; }
 /* ----------------------------- status bar ----------------------------- */
 .statusbar {
 	grid-area: status;
-	padding: 5px 12px;
+	display: flex;
+	align-items: center;
+	padding: var(--sp-2) var(--sp-4);
+	padding-bottom: max(var(--sp-2), env(safe-area-inset-bottom));
+	padding-left: max(var(--sp-4), env(safe-area-inset-left));
+	padding-right: max(var(--sp-4), env(safe-area-inset-right));
 	font-size: 12px;
 	border-top: 1px solid var(--border);
 	background: var(--bg-elev);
@@ -374,29 +558,245 @@ pre.code code.hljs { padding: 0; background: transparent; }
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-.statusbar.ok { color: #4ec98a; }
-.statusbar.warn { color: #e0a64e; }
-.statusbar.error { color: #ff6b81; }
-.statusbar.busy::before { content: "⏳ "; }
+.statusbar.ok { color: var(--ok); }
+.statusbar.warn { color: var(--warn); }
+.statusbar.error { color: var(--error); }
+/* Busy indicator: a quiet spinner, not an emoji. Falls back to a static ring. */
+.statusbar.busy::before {
+	content: "";
+	flex: 0 0 auto;
+	width: 11px;
+	height: 11px;
+	margin-right: 7px;
+	border: 2px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: rv-spin 0.7s linear infinite;
+}
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+
+/* ----------------------------- bottom tab bar (mobile only) ----------------------------- */
+.tabbar { display: none; }
+.tools-backdrop { display: none; }
 
 /* ----------------------------- scrollbars ----------------------------- */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-sm); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* ----------------------------- responsive ----------------------------- */
-@media (max-width: 820px) {
+/* ----------------------------- motion preference ----------------------------- */
+@media (prefers-reduced-motion: reduce) {
+	*, *::before, *::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+		scroll-behavior: auto !important;
+	}
+	.statusbar.busy::before { animation: none; }
+}
+
+/* =====================================================================
+   MOBILE LAYER  —  apple-mobile-design (FILE mode: index.html)
+   Single-pane workspace switching via a bottom tab bar; the dense toolbar
+   folds into a bottom sheet. Desktop styles above are untouched.
+   ===================================================================== */
+@media (max-width: 767px) {
+	:root { --sidebar-w: 100%; }
+
+	/* One content cell shared by sidebar + main; the active tab decides which
+	   shows. Order: topbar / warning / content / status / tabbar. */
 	#app {
 		grid-template-columns: 1fr;
-		grid-template-rows: auto auto auto 1fr auto;
+		grid-template-rows: auto auto 1fr auto auto;
 		grid-template-areas:
 			"topbar"
 			"warning"
-			"sidebar"
-			"main"
-			"status";
+			"content"
+			"status"
+			"tabbar";
 	}
-	.sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 42vh; }
-	.topbar { flex-wrap: wrap; }
+	/* min-width:0 is essential: a 1fr grid track defaults to min-width:auto, so wide
+	   children (long buttons, inputs, code lines) would otherwise expand the track
+	   past the viewport and get clipped by #app's overflow:hidden. */
+	.sidebar, .main { grid-area: content; min-height: 0; min-width: 0; }
+
+	/* Compact, single-row top bar: brand + Tools trigger. Brand label ellipsizes
+	   rather than forcing horizontal scroll on the narrowest phones. */
+	.topbar { flex-wrap: nowrap; gap: var(--sp-3); padding-top: max(var(--sp-3), env(safe-area-inset-top)); }
+	.topbar .brand { font-size: 15px; min-width: 0; }
+	.topbar .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.tb-tools-toggle {
+		display: inline-flex; align-items: center; gap: 6px;
+		min-height: 40px; padding: 8px 13px;
+	}
+	.tb-tools-toggle .ico { width: 16px; height: 16px; }
+
+	/* Sidebar (Files tab): full width, comfortable gutters, room to breathe. */
+	.sidebar {
+		gap: var(--sp-4);
+		padding: var(--sp-4) max(var(--sp-5), env(safe-area-inset-left)) var(--sp-4) max(var(--sp-5), env(safe-area-inset-right));
+		border-right: none;
+		overflow-y: auto;
+		overflow-x: hidden;
+	}
+	.ext-chips { max-height: none; }
+
+	/* Stop wide children from forcing horizontal overflow. Source controls stack
+	   full-width in a single column; every flex-row input may shrink to the column.
+	   NB: must force flex-wrap:nowrap here — with the base flex-wrap:wrap, a column
+	   flex container wraps overflowing items into a 2nd column, which pushed the
+	   source-label off-screen and dragged the whole layout wide. */
+	.source { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+	.source .btn { flex: 0 0 auto; width: 100%; }
+	.source-label { flex-basis: auto; width: 100%; }
+	.remote-row, .filter-row { min-width: 0; }
+	.remote-row > input, .filter-row > input,
+	#repo-url, #server-path, #filter, #gh-token { min-width: 0; flex: 1 1 auto; }
+
+	/* No split view on a phone — each pane is full-height. */
+	.vsplit { display: none; }
+	.graph-panel, .flow-panel { min-height: 0; }
+	.graph-panel[hidden] { display: none !important; }
+
+	/* Tab visibility. data-mobile-tab is set on #app by js/mobile.js. */
+	#app[data-mobile-tab="files"] .main { display: none; }
+	#app[data-mobile-tab="files"] .sidebar { display: flex; }
+
+	#app[data-mobile-tab="graph"] .sidebar { display: none; }
+	#app[data-mobile-tab="graph"] .viewer-panel { display: none; }
+	#app[data-mobile-tab="graph"] .main { display: flex; }
+
+	#app[data-mobile-tab="code"] .sidebar { display: none; }
+	#app[data-mobile-tab="code"] #graph-panel,
+	#app[data-mobile-tab="code"] #flow-panel { display: none !important; }
+	#app[data-mobile-tab="code"] .main { display: flex; }
+	#app[data-mobile-tab="code"] .viewer-panel { flex: 1 1 auto; }
+
+	/* Larger, tappable controls everywhere a finger lands. */
+	.btn { min-height: var(--tap); padding: 0 16px; font-size: 14px; }
+	.btn.small { min-height: 40px; }
+	.list-actions .btn { flex: 1; }
+	.source .btn { flex: 1 1 auto; }
+	.toggle { min-height: 40px; font-size: 14px; }
+	.toggle input { width: 18px; height: 18px; }
+
+	/* Readability: lift the smallest UI copy and give the Markdown/README viewer a
+	   comfortable reading size now that each pane has the full width. */
+	body { font-size: 14px; }
+	.md { font-size: 16px; padding: var(--sp-5); }
+	.chip { font-size: 12px; padding: 4px 10px; }
+	.remote-hint { font-size: 12px; }
+	.viewer-note { font-size: 13px; }
+
+	/* 16px floor on inputs prevents iOS Safari auto-zoom; 44px tall hit area. */
+	#filter, #repo-url, #gh-token {
+		font-size: 16px;
+		min-height: var(--tap);
+		border-radius: var(--radius);
+	}
+	.select { font-size: 16px; min-height: var(--tap); }
+
+	/* Comfortable list rows for touch scanning. */
+	.row { font-size: 15px; gap: var(--sp-3); }
+	.row .meta { font-size: 12px; }
+
+	/* ----- Tools bottom sheet (the topbar's secondary controls) ----- */
+	.tb-tools {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: var(--sp-3);
+		position: fixed;
+		left: 0; right: 0; bottom: 0;
+		z-index: 60;
+		max-height: 78dvh;
+		overflow: auto;
+		padding: var(--sp-3) max(var(--sp-5), env(safe-area-inset-right)) calc(var(--sp-5) + env(safe-area-inset-bottom)) max(var(--sp-5), env(safe-area-inset-left));
+		background: var(--bg-elev);
+		border-top: 1px solid var(--border);
+		border-radius: 18px 18px 0 0;
+		transform: translateY(100%);
+		visibility: hidden;
+		transition: transform var(--dur-3) var(--ease), visibility var(--dur-3) var(--ease);
+	}
+	#app.tools-open .tb-tools { transform: translateY(0); visibility: visible; }
+
+	.tb-tools-head {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-3);
+		position: sticky;
+		top: 0;
+		padding-bottom: var(--sp-3);
+		background: var(--bg-elev);
+	}
+	.tb-tools-head .grab { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); width: 36px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+	.tb-tools-head .title { font-weight: 650; font-size: 16px; letter-spacing: -0.01em; padding-top: 6px; }
+	.tb-tools-head .tools-close {
+		margin-left: auto; margin-top: 4px;
+		width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center;
+		background: var(--chip-bg); border: 1px solid var(--border); border-radius: var(--radius-pill);
+		color: var(--text); cursor: pointer;
+	}
+
+	/* Stack & enlarge the relocated controls inside the sheet. */
+	.tb-tools .seg { width: 100%; }
+	.tb-tools .seg-btn { flex: 1; min-height: 42px; font-size: 14px; }
+	.tb-tools > .btn, .tb-tools .tb-field { width: 100%; }
+	.tb-tools .tb-field { display: flex; }
+	.tb-tools .tb-field .select { flex: 1; width: 100%; }
+	.tb-tools .toggle { min-height: var(--tap); padding: 0 4px; }
+	.tb-tools .tb-sep { width: 100%; height: 1px; align-self: stretch; margin: 2px 0; }
+
+	.tools-backdrop {
+		display: block;
+		position: fixed; inset: 0; z-index: 55;
+		background: rgba(13, 17, 23, 0.55);
+		opacity: 0; visibility: hidden;
+		transition: opacity var(--dur-2) var(--ease), visibility var(--dur-2) var(--ease);
+	}
+	#app.tools-open ~ .tools-backdrop,
+	body.tools-open .tools-backdrop { opacity: 1; visibility: visible; }
+
+	/* Status line sits just above the tab bar. */
+	.statusbar { padding-bottom: var(--sp-2); }
+
+	/* ----- bottom tab bar ----- */
+	.tabbar {
+		grid-area: tabbar;
+		display: flex;
+		align-items: stretch;
+		background: var(--bg-elev);
+		border-top: 1px solid var(--border);
+		padding-bottom: env(safe-area-inset-bottom);
+		padding-left: env(safe-area-inset-left);
+		padding-right: env(safe-area-inset-right);
+	}
+	.tab {
+		flex: 1 1 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 3px;
+		min-height: 52px;
+		padding: 7px 4px;
+		background: transparent;
+		border: none;
+		border-top: 2px solid transparent;
+		color: var(--text-muted);
+		font-size: 11px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: color var(--dur-1) var(--ease);
+	}
+	.tab .ico { width: 22px; height: 22px; }
+	.tab[aria-pressed="true"] { color: var(--accent); border-top-color: var(--accent); }
+	.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+
+/* Tablet portrait: keep the two-pane shell but relax density a touch. */
+@media (min-width: 768px) and (max-width: 1023px) {
+	:root { --sidebar-w: 300px; }
 }

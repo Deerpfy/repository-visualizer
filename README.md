@@ -255,22 +255,38 @@ commands are in [`vendor/README.md`](vendor/README.md).
 > changed imports) so the map never goes stale. You can point the analysis at **any
 > repository anywhere** by passing a local path or a git/GitHub URL.
 
-Beyond the folder spider-graph, this repo ships a **directed module-flow analysis** with
-**three interchangeable surfaces over one shared engine** (`js/engine.js` +
-`js/mapmd.js` — the single source of truth; the browser, the CLI and the HTTP server all
-consume them, none re-implement the logic):
+Beyond the folder spider-graph, this repo ships a **directed flow analysis** with **two
+interchangeable surfaces over one shared engine** (`js/engine.js` + `js/mapmd.js` — the
+single source of truth; the browser and the CLI both consume it, neither re-implements the
+logic). There is **no server** — the browser runs entirely offline. Two complementary flows:
+
+- **Function call flow (code flow)** — functions as nodes, **arrows = calls** (who
+  calls/points to whom). Series vs **parallel** and **recursion** are detected. Two tiers:
+  - *Heuristic* (`engine.buildCallGraph`, pure-JS, always available, runs in the browser):
+    best-effort regex resolution across JS/TS, Python, C#, Java, C/C++.
+  - *Compiler-accurate providers* (opt-in, in the Node CLI): when the matching SDK is
+    installed, the analysis is delegated to the real compiler front-end and **follows
+    virtual/interface dispatch, overrides, events and constructors**. **C# (Roslyn)** ships
+    now in `tools/CSharpCallGraph`; the architecture (`scripts/providers/`) extends to Go,
+    Python and C++. Edges are tagged `call` / `dispatch` (virtual) / `event` / `new`, and
+    `callGraph.provider` reports which analyzer produced the graph.
+  This is the headline diagram in the Flow view and the map.
+- **Module import flow** — `engine.buildModel(...)`: files joined by `import`/`require`,
+  with START entry points, END terminals, import cycles and a layered START→END flow.
 
 ### 1. ENGINE (in-process)
 
 ```js
-// Browser (already loaded as window.RV): build the model from the current index.
-const model = await RV.engine.buildModel({ rootName, entries, readText: RV.readText, indexHtmlText, packageJson });
-const markdown = RV.buildMarkdownMap(model, { title: "Repository map" });
+// Browser (already loaded as window.RV): build the models from the current index.
+const model     = await RV.engine.buildModel({ rootName, entries, readText: RV.readText, indexHtmlText, packageJson }); // module flow
+const callGraph = await RV.engine.buildCallGraph({ rootName, entries, readText: RV.readText });                          // code flow
+const markdown  = RV.buildMarkdownMap(model, { title: "Repository map" }, callGraph);
 
 // Node (CommonJS): same logic, headless.
 const engine = require("./js/engine.js");
 const { buildMarkdownMap } = require("./js/mapmd.js");
-const model = await engine.buildModel({ rootName, entries, readText /* async (entry)=>string */ });
+const model     = await engine.buildModel({ rootName, entries, readText /* async (entry)=>string */ });
+const callGraph = await engine.buildCallGraph({ rootName, entries, readText });
 ```
 
 ### 2. CLI (`scripts/repo-analyze.js`) — analyze any repo, emit JSON + Markdown
@@ -289,36 +305,22 @@ node scripts/repo-analyze.js . --stdout
 Node built-ins only — **no `npm install`, no dependencies, no `node_modules`.** A token
 for private repos / higher GitHub rate limits is read from `GITHUB_TOKEN` (env only).
 
-### 3. HTTP API (`scripts/api-server.js`) — optional local endpoints
-
-```bash
-node scripts/api-server.js            # binds http://127.0.0.1:4317 (localhost only)
-node scripts/api-server.js --port 5000 --root ..   # widen the allowed local-repo root
-```
-
-| Method | Path | Params | Returns |
-|--------|------|--------|---------|
-| `GET`  | `/api/health` | — | `{ ok, name, version }` |
-| `POST` | `/api/analyze` | JSON body `{ repo, includeNoise? }` | the full **AnalysisModel** |
-| `GET`  | `/api/flow` | `repo`, `includeNoise?` | `{ root, entries, terminals, cycles, layers, metrics }` |
-| `GET`  | `/api/graph` | `repo`, `mode=flow\|containment` | `{ nodes, edges }` |
-| `GET`  | `/api/export` | `repo`, `format=md\|json`, `write=1?` | Markdown text or JSON (`write=1` → writes `docs/repo-map.md`) |
-| `GET`  | `/` | — | serves the visualizer UI |
-
-```bash
-# Example request:
-curl "http://127.0.0.1:4317/api/health"
-# Example (trimmed) response:
-# { "ok": true, "name": "repository-visualizer", "version": "1.2.0" }
-
-curl "http://127.0.0.1:4317/api/export?repo=.&format=md&write=1"
-# → { "written": "docs/repo-map.md" }   (and the same Markdown the CLI writes)
-```
-
-`repo` is validated: local paths must resolve **under the allowed root** (the directory
-the server was launched in, or `--root`), and only `http(s)`/git URLs are treated as
-remote. The server binds to **127.0.0.1 only**, never executes file content, and invokes
-`git` via an argument array (never a shell string).
+> **Compiler-accurate C# (Roslyn) — via the CLI, no server.** If the **.NET SDK** (`dotnet`)
+> is installed, the CLI automatically uses the Roslyn analyzer in `tools/CSharpCallGraph` — it
+> follows virtual/interface dispatch, overrides, events and constructors. The first run does a
+> one-time `dotnet` restore/build of that tool (the only place a package is used; the visualizer
+> app itself stays dependency-free). No SDK → it silently falls back to the heuristic.
+>
+> ```bash
+> # Compiler-accurate C# map (open the .md in any Mermaid viewer / VS Code / GitHub):
+> node scripts/repo-analyze.js "C:\path\to\your\csharp" --md docs/repo-map.md
+> ```
+> To view that accurate graph **in the browser** (offline, no server): write a JSON snapshot
+> into the project folder and open the folder — **Flow → Functions** loads it automatically:
+> ```bash
+> node scripts/repo-analyze.js "C:\path\to\your\csharp" --json "C:\path\to\your\csharp\repo-map.json"
+> ```
+> Without a snapshot the browser uses the always-available heuristic.
 
 ### Get the full picture (procedure)
 
@@ -328,23 +330,25 @@ remote. The server binds to **127.0.0.1 only**, never executes file content, and
    plus the **Cycles** section and the layered **Execution / dependency flow**.
 4. After structural edits, regenerate it so the map stays authoritative.
 
-In the browser UI, the same is available without scripts: toggle **Flow** in the topbar
-to render the directed diagram (cycles highlighted in red), and click **Export map (.md)**
-to save `repo-map.md`.
+In the browser UI, the same is available without scripts: toggle **Flow** in the topbar,
+choose **Functions** (the code flow — call arrows, parallel/recursion in red) or
+**Modules** (the import flow), and click **Export map (.md)** to save `repo-map.md` (which
+contains both the function call flow and the module import flow).
 
 ### Machine-readable surface map
 
 ```json
 {
-  "engine": { "browser": "RV.engine.buildModel(...)", "node": "require('./js/engine.js').buildModel(...)", "markdown": "RV.buildMarkdownMap / require('./js/mapmd.js')" },
+  "engine": { "browser": "RV.engine.buildModel(...) | RV.engine.buildCallGraph(...)", "node": "require('./js/engine.js').buildModel/buildCallGraph(...)", "markdown": "RV.buildMarkdownMap(model, meta, callGraph) / require('./js/mapmd.js')" },
+  "flows": { "code": "engine.buildCallGraph — functions + call arrows (series/parallel/recursion)", "module": "engine.buildModel — files + import edges (START→END, cycles)" },
   "cli": "node scripts/repo-analyze.js <repo> --md docs/repo-map.md --json docs/repo-map.json",
-  "http": { "start": "node scripts/api-server.js", "base": "http://127.0.0.1:4317", "endpoints": ["GET /api/health", "POST /api/analyze", "GET /api/flow", "GET /api/graph", "GET /api/export"] },
+  "csharp": "compiler-accurate via tools/CSharpCallGraph (Roslyn) when the .NET SDK is present; else heuristic",
+  "browser": "offline; Flow → Functions; loads repo-map.json/callgraph.json snapshot if present (no server)",
   "export": "docs/repo-map.md",
   "reference": "docs/API.md"
 }
 ```
 
-See [`docs/API.md`](docs/API.md) for the complete engine, CLI and HTTP reference (every
-field, flag and endpoint with request/response examples) and [`AGENTS.md`](AGENTS.md) for
-the one-line contract.
+See [`docs/API.md`](docs/API.md) for the complete engine and CLI reference (every field and
+flag with examples) and [`AGENTS.md`](AGENTS.md) for the one-line contract.
 <!-- AI-API:END -->

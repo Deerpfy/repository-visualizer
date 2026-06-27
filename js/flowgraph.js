@@ -36,6 +36,12 @@
 		const tip = el("div", { class: "graph-tip", role: "tooltip" });
 		tip.style.display = "none";
 		container.appendChild(tip);
+
+		// Overlay message shown when there is nothing to draw (never a blank panel).
+		const msgEl = el("div", { class: "panel-empty" });
+		msgEl.style.cssText = "position:absolute;inset:0;z-index:5;background:var(--graph-bg);display:none;";
+		container.appendChild(msgEl);
+		function showMsg(text) { msgEl.textContent = text || ""; msgEl.style.display = text ? "flex" : "none"; }
 		let lastPointer = { x: 0, y: 0 };
 		container.addEventListener("mousemove", (e) => {
 			const r = container.getBoundingClientRect();
@@ -58,22 +64,24 @@
 				terminal: v("--flow-terminal", "#2ea043"),
 				cycle: v("--flow-cycle", v("--graph-ref", "#e0556b")),
 				node: v("--flow-node", "#39414f"),
+				module: v("--flow-module", "#8957e5"),
 			};
 		}
 
 		function nodeColor(role, colors) {
 			if (role === "entry") return colors.entry;
-			if (role === "terminal") return colors.terminal;
+			if (role === "terminal" || role === "leaf") return colors.terminal;
 			if (role === "cycle") return colors.cycle;
+			if (role === "module") return colors.module;
 			return colors.node;
 		}
 
 		// Pick which nodes to draw when a model is large: keep entries, cycle members
-		// and terminals first, then the highest-degree nodes — mirrors the export cap.
+		// and terminals/leaves first, then the highest-degree nodes — mirrors the export cap.
 		function selectRenderNodes(all) {
 			if (all.length <= RENDER_CAP) return { list: all, truncated: false };
-			const score = (n) => (n.entry ? 4 : 0) + (n.cycle ? 4 : 0) + (n.terminal ? 2 : 0) + (n.inDeg + n.outDeg) / 1000;
-			const list = all.slice().sort((a, b) => score(b) - score(a) || (a.path < b.path ? -1 : 1)).slice(0, RENDER_CAP);
+			const score = (n) => (n.role === "entry" ? 4 : 0) + (n.role === "cycle" ? 4 : 0) + (n.role === "module" ? 3 : 0) + (n.role === "terminal" || n.role === "leaf" ? 2 : 0) + ((n.inDeg || 0) + (n.outDeg || 0)) / 1000;
+			const list = all.slice().sort((a, b) => score(b) - score(a) || (a.id < b.id ? -1 : 1)).slice(0, RENDER_CAP);
 			return { list, truncated: true };
 		}
 
@@ -102,7 +110,7 @@
 			network.on("hoverNode", (params) => {
 				const meta = nodeMeta.get(params.node);
 				if (!meta) return;
-				tip.textContent = meta.path || (getRootName && getRootName()) || "repository";
+				tip.textContent = meta.id || meta.path || (getRootName && getRootName()) || "repository";
 				tip.style.display = "block";
 				positionTip();
 			});
@@ -116,21 +124,50 @@
 			const colors = themeColors();
 			nodeMeta.clear();
 
+			const isCall = model.kind === "callgraph"; // function code flow vs module import flow
+
 			if (!model || !model.nodes.length) {
 				nodes.clear(); edges.clear();
-				return { shown: 0, cycles: 0, truncated: false };
+				showMsg(isCall
+					? "No functions detected for the call flow.\nThe analyzer supports JS/TS, Python, C#, Java and C/C++ — this folder may contain none, or only data/markup files."
+					: "Nothing to show yet — open a folder with source files.");
+				return { shown: 0, cycles: 0, truncated: false, functions: 0, fellBack: false };
 			}
 
-			const { list, truncated } = selectRenderNodes(model.nodes);
-			const renderSet = new Set(list.map((n) => n.path));
+			// For the call graph, render CONNECTED functions (those in some call). If NONE
+			// resolved into a call relationship, fall back to showing the functions
+			// themselves (minus synthetic module nodes) so the panel is never blank.
+			let candidates = model.nodes;
+			let fellBack = false;
+			if (isCall) {
+				const connected = new Set();
+				for (const e of model.edges || []) { connected.add(e.from); connected.add(e.to); }
+				const conn = model.nodes.filter((n) => connected.has(n.id));
+				if (conn.length) candidates = conn;
+				else { candidates = model.nodes.filter((n) => n.kind !== "module"); fellBack = true; }
+			}
+
+			if (!candidates.length) {
+				nodes.clear(); edges.clear();
+				showMsg(isCall
+					? "No functions detected for the call flow.\nThe analyzer supports JS/TS, Python, C#, Java and C/C++ — this folder may contain none, or only data/markup files."
+					: "No modules to show with the current filters.");
+				return { shown: 0, cycles: 0, truncated: false, functions: 0, fellBack: false };
+			}
+			showMsg("");
+
+			const { list, truncated } = selectRenderNodes(candidates);
+			const renderSet = new Set(list.map((n) => n.id));
 
 			const vnodes = list.map((n) => {
-				nodeMeta.set(n.path, { path: n.path, name: n.name, entry: n });
+				// id is the node path (import) or function id (call). tip = full path/id.
+				nodeMeta.set(n.id, { path: isCall ? (n.file || n.id) : n.path, name: n.name, id: n.id, entry: n });
 				const bg = nodeColor(n.role, colors);
 				const isPlain = n.role === "normal";
+				const labelText = isCall ? (n.kind === "module" ? `${(n.file || "").split("/").pop()} (module)` : n.name) : n.name;
 				return {
-					id: n.path,
-					label: n.name,
+					id: n.id,
+					label: labelText,
 					level: typeof n.layer === "number" ? n.layer : undefined,
 					shape: "box",
 					color: { background: bg, border: isPlain ? colors.edge : "#ffffff" },
@@ -141,15 +178,24 @@
 
 			const vedges = (model.edges || [])
 				.filter((e) => renderSet.has(e.from) && renderSet.has(e.to))
-				.map((e, i) => e.inCycle
-					? { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "cycle", font: { color: colors.cycle, size: 9, strokeWidth: 0 }, color: { color: colors.cycle, opacity: 0.95 }, width: 1.4 }
-					: { id: `e${i}`, from: e.from, to: e.to, color: { color: colors.edge, opacity: 0.7 }, width: 0.9 }
-				);
+				.map((e, i) => {
+					if (isCall && (e.inCycle || e.self)) // recursion (mutual or self)
+						return { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "recurses", font: { color: colors.cycle, size: 9, strokeWidth: 0 }, color: { color: colors.cycle, opacity: 0.95 }, width: 1.4 };
+					if (isCall && e.parallel) // concurrent (Promise.all / Task.WhenAll / parallel)
+						return { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "∥", font: { color: colors.entry, size: 11, strokeWidth: 0 }, color: { color: colors.entry, opacity: 0.9 }, width: 1.2 };
+					if (isCall && e.via === "dispatch") // virtual / interface dispatch target
+						return { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "virtual", font: { color: colors.module, size: 9, strokeWidth: 0 }, color: { color: colors.module, opacity: 0.9 }, width: 1.1 };
+					if (isCall && e.via === "event") // event handler
+						return { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "event", font: { color: colors.terminal, size: 9, strokeWidth: 0 }, color: { color: colors.terminal, opacity: 0.9 }, width: 1.1 };
+					if (!isCall && e.inCycle) // import cycle
+						return { id: `e${i}`, from: e.from, to: e.to, dashes: true, label: "cycle", font: { color: colors.cycle, size: 9, strokeWidth: 0 }, color: { color: colors.cycle, opacity: 0.95 }, width: 1.4 };
+					return { id: `e${i}`, from: e.from, to: e.to, color: { color: colors.edge, opacity: 0.7 }, width: 0.9 };
+				});
 
 			nodes.clear(); edges.clear();
 			nodes.add(vnodes);
 			edges.add(vedges);
-			return { shown: vnodes.length, cycles: model.cycles ? model.cycles.length : 0, truncated };
+			return { shown: vnodes.length, cycles: model.cycles ? model.cycles.length : 0, truncated, fellBack, functions: model.metrics ? model.metrics.functions : undefined };
 		}
 
 		// ---- off-screen PNG export (mirrors graph.js exportImage) ----------

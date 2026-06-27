@@ -17,7 +17,8 @@
 		if (!RV.buildMarkdownMap) throw new Error("Markdown builder unavailable: js/mapmd.js failed to load.");
 		if (!model || !model.nodes) throw new Error("No analysis model — switch to Flow to build one first.");
 		if (onStatus) onStatus("Rendering Markdown map…");
-		const md = RV.buildMarkdownMap(model, meta || {});
+		// meta.callGraph (the function code flow), when present, becomes the headline section.
+		const md = RV.buildMarkdownMap(model, meta || {}, (meta && meta.callGraph) || null);
 		const filename = (meta && meta.suggestedName) || DEFAULT_NAME;
 
 		// Preferred: write directly via a save dialog (Chromium).

@@ -8,8 +8,8 @@
 //   normalizePath(path)              -> collapsed "./.." path
 //   buildModel({...})                -> AnalysisModel    (nodes/edges/cycles/layers/…)
 //
-// js/graph.js (browser overlay), scripts/repo-analyze.js (CLI) and scripts/api-server.js
-// all CONSUME these — the parser/model logic is never forked or re-implemented elsewhere.
+// js/graph.js (browser overlay) and scripts/repo-analyze.js (CLI) both CONSUME these —
+// the parser/model logic is never forked or re-implemented elsewhere.
 (function (root, factory) {
 	const api = factory();
 	if (typeof module !== "undefined" && module.exports) module.exports = api; // Node (CommonJS)
@@ -511,11 +511,366 @@
 		return layer;
 	}
 
+	// ======================================================================
+	// FUNCTION-LEVEL CALL GRAPH (best-effort, like parseRefs) — the "code flow".
+	// Nodes = functions; edges = "caller calls/points to callee". Resolution is
+	// conservative: a call resolves to a function defined in the SAME file, else to a
+	// project-wide UNIQUELY-named function, else it's treated as external (no edge) —
+	// this avoids wrong edges from ambiguous method names. Series vs parallel is a
+	// heuristic: calls inside Promise.all/allSettled/race (or a parallel(...) helper)
+	// are flagged parallel; everything else is sequential (series).
+	// ======================================================================
+
+	const JS_CALL_KEYWORDS = new Set([
+		"if", "for", "while", "switch", "catch", "return", "function", "typeof", "instanceof",
+		"new", "delete", "void", "do", "else", "case", "await", "yield", "throw", "with",
+		"super", "in", "of", "constructor", "set", "get", "async", "static", "var", "let", "const",
+		// C# / Java / C++ control & contextual keywords that take "(...)" — so they are not
+		// mistaken for a function definition or a call.
+		"foreach", "using", "lock", "fixed", "unchecked", "checked", "sizeof", "nameof",
+		"default", "when", "synchronized", "namespace", "goto", "operator",
+	]);
+	// Built-in library methods/globals: never resolve these as user functions — they are
+	// the dominant source of false edges (e.g. `arr.push(...)` would otherwise "call" any
+	// local helper named `push`). Skipping them keeps the call graph conservative.
+	const BUILTINS = new Set([
+		// Array / iterable
+		"push", "pop", "shift", "unshift", "slice", "splice", "concat", "join", "map", "filter",
+		"forEach", "reduce", "reduceRight", "find", "findIndex", "findLast", "some", "every",
+		"includes", "indexOf", "lastIndexOf", "sort", "reverse", "flat", "flatMap", "fill", "at",
+		"keys", "values", "entries", "from", "of", "isArray",
+		// Map / Set
+		"get", "set", "has", "add", "delete", "clear",
+		// Promise / async
+		"then", "catch", "finally", "all", "allSettled", "race", "resolve", "reject",
+		// String
+		"replace", "replaceAll", "trim", "trimStart", "trimEnd", "toLowerCase", "toUpperCase",
+		"split", "startsWith", "endsWith", "padStart", "padEnd", "repeat", "charAt", "charCodeAt",
+		"codePointAt", "substring", "substr", "match", "matchAll", "normalize", "localeCompare",
+		// Number / Math / JSON / Object
+		"toFixed", "toString", "toJSON", "parseInt", "parseFloat", "isNaN", "isFinite", "valueOf",
+		"max", "min", "round", "floor", "ceil", "abs", "pow", "sqrt", "random", "sign", "trunc",
+		"stringify", "parse", "assign", "freeze", "create", "defineProperty", "getPrototypeOf",
+		"hasOwnProperty", "isInteger", "fromCharCode", "fromEntries", "getOwnPropertyNames",
+		// timers / console / fn / global
+		"setTimeout", "setInterval", "clearTimeout", "clearInterval", "requestAnimationFrame",
+		"log", "warn", "error", "info", "debug", "assert", "call", "apply", "bind", "fetch",
+		"require", "test", "exec", "now", "isTrue",
+		// DOM-ish (browser app)
+		"querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
+		"appendChild", "removeChild", "replaceChild", "insertBefore", "append", "prepend", "remove",
+		"setAttribute", "getAttribute", "removeAttribute", "addEventListener", "removeEventListener",
+		"createElement", "createTextNode", "focus", "blur", "click", "dispatchEvent", "preventDefault",
+		"stopPropagation", "getComputedStyle", "getPropertyValue", "getBoundingClientRect",
+		"createObjectURL", "revokeObjectURL", "toBlob", "getContext", "setPointerCapture",
+		"releasePointerCapture", "replaceChildren", "createWritable", "write", "close", "matchMedia",
+		"getItem", "setItem", "removeItem", "createReadStream", "writeHead", "end", "pipe", "destroy",
+	]);
+	const PY_KEYWORDS = new Set(["if", "for", "while", "elif", "else", "with", "print", "return", "def", "class", "and", "or", "not", "in", "is", "lambda", "yield", "await", "assert", "raise", "except"]);
+
+	/** Replace comment + string CONTENTS with spaces (preserving length/newlines) so
+	 *  braces/parens inside strings or comments don't confuse the scanners. */
+	function maskCode(text, isPy) {
+		const out = text.split("");
+		const n = text.length;
+		let i = 0;
+		const blank = (a, b) => { for (let k = a; k < b && k < n; k++) if (out[k] !== "\n") out[k] = " "; };
+		while (i < n) {
+			const c = text[i], c2 = text[i + 1];
+			if (!isPy && c === "/" && c2 === "/") { let j = i; while (j < n && text[j] !== "\n") j++; blank(i, j); i = j; continue; }
+			if (isPy && c === "#") { let j = i; while (j < n && text[j] !== "\n") j++; blank(i, j); i = j; continue; }
+			if (!isPy && c === "/" && c2 === "*") { let j = i + 2; while (j < n && !(text[j] === "*" && text[j + 1] === "/")) j++; j = Math.min(n, j + 2); blank(i, j); i = j; continue; }
+			if (isPy && (c === "'" || c === '"') && text[i + 1] === c && text[i + 2] === c) { // triple-quoted
+				const q = c; let j = i + 3; while (j < n && !(text[j] === q && text[j + 1] === q && text[j + 2] === q)) j++; j = Math.min(n, j + 3); blank(i, j); i = j; continue;
+			}
+			if (c === '"' || c === "'" || c === "`") {
+				const q = c; let j = i + 1;
+				while (j < n) { if (text[j] === "\\") { j += 2; continue; } if (text[j] === q || (q !== "`" && text[j] === "\n")) { j++; break; } j++; }
+				blank(i, j); i = j; continue;
+			}
+			i++;
+		}
+		return out.join("");
+	}
+
+	function lineAt(text, idx) { let ln = 1; for (let i = 0; i < idx && i < text.length; i++) if (text[i] === "\n") ln++; return ln; }
+	/** From `{`/`(` at openIdx, return the matching close index, or -1. */
+	function matchPair(masked, openIdx, open, close) {
+		let depth = 0;
+		for (let i = openIdx; i < masked.length; i++) {
+			if (masked[i] === open) depth++;
+			else if (masked[i] === close) { depth--; if (depth === 0) return i; }
+		}
+		return -1;
+	}
+
+	/** Extract JS/TS function definitions with their body ranges. */
+	function extractFunctionsJS(masked) {
+		const defs = [];
+		const seen = new Set(); // dedupe by body-open index
+		const addBraced = (name, kind, headIdx, braceIdx) => {
+			if (braceIdx < 0 || seen.has(braceIdx)) return;
+			const end = matchPair(masked, braceIdx, "{", "}");
+			if (end < 0) return;
+			seen.add(braceIdx);
+			defs.push({ name, kind, headIdx, bodyStart: braceIdx, bodyEnd: end });
+		};
+		// Locate the body "{" after a parameter list that starts at parenIdx.
+		const braceAfterParams = (parenIdx) => {
+			const close = matchPair(masked, parenIdx, "(", ")");
+			if (close < 0) return -1;
+			let j = close + 1;
+			while (j < masked.length && /\s/.test(masked[j])) j++;
+			return masked[j] === "{" ? j : -1;
+		};
+		let m;
+		// function NAME(...) { ... }
+		const reNamed = /\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/g;
+		while ((m = reNamed.exec(masked))) addBraced(m[1], "function", m.index, braceAfterParams(masked.indexOf("(", m.index + 8)));
+		// NAME = function(...) {  |  NAME = async function(...) {
+		const reAssignFn = /\b([A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s+)?function\s*\*?\s*[A-Za-z_$]*\s*\(/g;
+		while ((m = reAssignFn.exec(masked))) addBraced(m[1], "function", m.index, braceAfterParams(masked.indexOf("(", m.index + m[0].length - 1)));
+		// NAME = (args) => {  |  NAME: arg => {   (only braced arrow bodies get a range)
+		const reArrow = /\b([A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g;
+		while ((m = reArrow.exec(masked))) { const b = masked.indexOf("{", m.index + m[0].length - 1); addBraced(m[1], "arrow", m.index, b); }
+		// Method shorthand / class method:  NAME(...) {   (statement/member position, not a keyword)
+		const reMethod = /(^|[\s{};,])(?:async\s+|get\s+|set\s+|static\s+|\*\s*)*([A-Za-z_$][\w$]*)\s*\(/gm;
+		while ((m = reMethod.exec(masked))) {
+			const name = m[2];
+			if (JS_CALL_KEYWORDS.has(name)) continue;
+			const parenIdx = masked.indexOf("(", m.index + m[0].length - 1);
+			const b = braceAfterParams(parenIdx);
+			if (b >= 0) addBraced(name, "method", m.index, b);
+		}
+		return defs;
+	}
+
+	/** Extract Python def's with their indentation-based body ranges. */
+	function extractFunctionsPy(masked) {
+		const defs = [];
+		const lines = masked.split("\n");
+		let offset = 0;
+		const lineStart = [];
+		for (const ln of lines) { lineStart.push(offset); offset += ln.length + 1; }
+		for (let i = 0; i < lines.length; i++) {
+			const m = lines[i].match(/^(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+			if (!m) continue;
+			const indent = m[1].length;
+			let end = masked.length;
+			for (let j = i + 1; j < lines.length; j++) {
+				if (!lines[j].trim()) continue;
+				const ind = lines[j].match(/^(\s*)/)[1].length;
+				if (ind <= indent) { end = lineStart[j] - 1; break; }
+			}
+			defs.push({ name: m[2], kind: "def", headIdx: lineStart[i], bodyStart: lineStart[i], bodyEnd: end });
+		}
+		return defs;
+	}
+
+	/** All call sites (identifier immediately followed by "("), excluding keywords, defs,
+	 *  and built-in library methods/globals (the main source of false edges). */
+	function extractCalls(masked, isPy) {
+		const calls = [];
+		const kw = isPy ? PY_KEYWORDS : JS_CALL_KEYWORDS;
+		const re = /([A-Za-z_$][\w$]*)\s*\(/g;
+		let m;
+		while ((m = re.exec(masked))) {
+			const name = m[1];
+			if (kw.has(name) || BUILTINS.has(name)) continue;
+			// Skip a "definition" paren that follows the `function`/`def` keyword token.
+			const before = masked.slice(Math.max(0, m.index - 9), m.index);
+			if (/\b(function|def)\s*\*?\s*$/.test(before)) continue;
+			// Skip a method/function DEFINITION header `name(params) {` — in C#/Java/C++ a
+			// method has no `function`/`def` keyword, so its name+paren would otherwise be
+			// double-counted as a call to itself (spurious `<module> -> method` edges).
+			if (!isPy) {
+				const parenIdx = m.index + m[0].length - 1;
+				const close = matchPair(masked, parenIdx, "(", ")");
+				if (close > parenIdx) { let j = close + 1; while (j < masked.length && /\s/.test(masked[j])) j++; if (masked[j] === "{") continue; }
+			}
+			// member call? (preceded by `.`, ignoring whitespace) — recorded for callers who care.
+			let k = m.index - 1; while (k >= 0 && /\s/.test(masked[k])) k--;
+			calls.push({ name, idx: m.index, member: masked[k] === "." });
+		}
+		return calls;
+	}
+
+	/** Ranges of Promise.all/allSettled/race(...) or parallel(...) — calls inside ⇒ parallel. */
+	function parallelRanges(masked) {
+		const ranges = [];
+		// JS Promise.all/allSettled/race + a parallel(...) helper, and C#/.NET Task.WhenAll/WhenAny.
+		const re = /\b(?:Promise\s*\.\s*(?:all|allSettled|race)|Task\s*\.\s*(?:WhenAll|WhenAny)|parallel)\s*\(/g;
+		let m;
+		while ((m = re.exec(masked))) {
+			const open = masked.indexOf("(", m.index + m[0].length - 1);
+			const close = matchPair(masked, open, "(", ")");
+			if (close > open) ranges.push([open, close]);
+		}
+		return ranges;
+	}
+
+	/**
+	 * Build the function-level call graph.
+	 * Returns { root, generatedAt, functions:[...], calls:[...], cycles, metrics }.
+	 */
+	async function buildCallGraph(opts) {
+		opts = opts || {};
+		const rootName = opts.rootName || "repository";
+		const entries = opts.entries || [];
+		const readText = typeof opts.readText === "function" ? opts.readText : null;
+		const includeNoise = !!opts.includeNoise;
+		const sizeCap = typeof opts.sizeCap === "number" ? opts.sizeCap : 256 * 1024;
+		const funcCap = typeof opts.funcCap === "number" ? opts.funcCap : 4000;
+		const generatedAt = opts.generatedAt || new Date().toISOString();
+
+		// Select code files (call graphs only make sense for code).
+		const files = [];
+		for (const e of entries) {
+			if (!e || !e.path) continue;
+			const path = String(e.path).replace(/\\/g, "/");
+			if (!path || path.endsWith("/")) continue;
+			if (!includeNoise && isNoisePath(path)) continue;
+			const ext = e.ext || extOf(path);
+			if (typeOf(baseName(path), ext) !== "code") continue;
+			if ((typeof e.size === "number" ? e.size : 0) > sizeCap) continue;
+			files.push({ path, ext, _src: e });
+		}
+		files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+		const functions = []; // { id, file, name, kind, line, bodyStart, bodyEnd }
+		const perFile = []; // { file, funcs:[...], moduleId, calls, pranges, masked, text }
+		let truncated = false;
+
+		for (const f of files) {
+			if (functions.length >= funcCap) { truncated = true; break; }
+			let text;
+			try { text = await readText(f._src); } catch { continue; }
+			if (typeof text !== "string") continue;
+			const isPy = f.ext === "py";
+			const masked = maskCode(text, isPy);
+			const rawDefs = isPy ? extractFunctionsPy(masked) : extractFunctionsJS(masked);
+			rawDefs.sort((a, b) => a.bodyStart - b.bodyStart);
+			const funcs = [];
+			for (const d of rawDefs) {
+				if (functions.length >= funcCap) { truncated = true; break; }
+				const node = { id: `${f.path}::${d.name}#${lineAt(text, d.headIdx)}`, file: f.path, name: d.name, kind: d.kind, line: lineAt(text, d.headIdx), bodyStart: d.bodyStart, bodyEnd: d.bodyEnd };
+				functions.push(node);
+				funcs.push(node);
+			}
+			const moduleId = `${f.path}::<module>`;
+			perFile.push({ file: f.path, funcs, moduleId, calls: extractCalls(masked, isPy), pranges: parallelRanges(masked) });
+		}
+
+		// Resolution indexes: per-file name→func, and global name→[funcs] for uniqueness.
+		const globalByName = new Map();
+		for (const fn of functions) { if (!globalByName.has(fn.name)) globalByName.set(fn.name, []); globalByName.get(fn.name).push(fn); }
+		const fileNameMap = new Map(); // file -> Map(name -> func)
+		for (const fn of functions) {
+			if (!fileNameMap.has(fn.file)) fileNameMap.set(fn.file, new Map());
+			if (!fileNameMap.get(fn.file).has(fn.name)) fileNameMap.get(fn.file).set(fn.name, fn);
+		}
+
+		// Synthetic module-top-level nodes (calls made by a file's body on load).
+		const moduleNodes = new Map();
+		const ensureModule = (pf) => {
+			if (!moduleNodes.has(pf.file)) moduleNodes.set(pf.file, { id: pf.moduleId, file: pf.file, name: "(module top-level)", kind: "module", line: 1, bodyStart: -1, bodyEnd: -1 });
+			return moduleNodes.get(pf.file);
+		};
+
+		// Attribute each call to its innermost enclosing function (or the module node),
+		// resolve the callee, and emit edges.
+		const edgeSet = new Set();
+		const edges = []; // { from, to, file, parallel, self }
+		const orderCounter = new Map();
+		for (const pf of perFile) {
+			const enclosers = pf.funcs.slice().sort((a, b) => (a.bodyEnd - a.bodyStart) - (b.bodyEnd - b.bodyStart)); // smallest first = innermost
+			const inParallel = (idx) => pf.pranges.some(([a, b]) => idx > a && idx < b);
+			for (const call of pf.calls) {
+				// Resolve the callee FIRST: same-file, then a project-wide unique name. Only a
+				// resolved call produces an edge (so non-callable files don't get empty nodes).
+				let callee = (fileNameMap.get(pf.file) && fileNameMap.get(pf.file).get(call.name)) || null;
+				if (!callee) { const g = globalByName.get(call.name); if (g && g.length === 1) callee = g[0]; }
+				if (!callee) continue; // external/ambiguous → no edge
+				// caller = innermost function body containing the call site, else the module node
+				// (materialised only now, when there is a real top-level edge to draw).
+				let caller = null;
+				for (const fn of enclosers) { if (call.idx > fn.bodyStart && call.idx < fn.bodyEnd) { caller = fn; break; } }
+				if (!caller) caller = ensureModule(pf);
+				const self = caller.id === callee.id;
+				const key = caller.id + " => " + callee.id;
+				if (edgeSet.has(key)) continue;
+				edgeSet.add(key);
+				const ord = (orderCounter.get(caller.id) || 0); orderCounter.set(caller.id, ord + 1);
+				edges.push({ from: caller.id, to: callee.id, file: pf.file, parallel: inParallel(call.idx), self, order: ord });
+			}
+		}
+
+		// Assemble node list (functions + the module nodes that actually made calls), then
+		// hand off to the shared finalizer (degrees / SCC / roles / metrics).
+		const allNodes = functions.map((fn) => ({ id: fn.id, file: fn.file, name: fn.name, kind: fn.kind, line: fn.line }));
+		for (const mn of moduleNodes.values()) allNodes.push({ id: mn.id, file: mn.file, name: mn.name, kind: mn.kind, line: mn.line });
+		return finalizeCallGraph(rootName, allNodes, edges, { generatedAt, truncated, files: perFile.length, provider: "heuristic" });
+	}
+
+	/**
+	 * Shared call-graph finalizer: the SINGLE place that turns raw { nodes, edges } into
+	 * the standard CallGraph (degrees, recursion via SCC, roles, metrics). Both the
+	 * regex heuristic AND the external language providers (Roslyn, etc.) emit raw
+	 * nodes/edges and call this, so every surface gets an identical shape.
+	 *   nodes: [{ id, file, name, kind, line }]   edges: [{ from, to, parallel?, self? }]
+	 */
+	function finalizeCallGraph(rootName, allNodes, rawEdges, opts) {
+		opts = opts || {};
+		const generatedAt = opts.generatedAt || new Date().toISOString();
+		const nodeIds = new Set(allNodes.map((n) => n.id));
+		const liveEdges = rawEdges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to)).map((e) => ({ ...e, inCycle: false }));
+
+		const inDeg = new Map(allNodes.map((n) => [n.id, 0]));
+		const outDeg = new Map(allNodes.map((n) => [n.id, 0]));
+		const adj = new Map(allNodes.map((n) => [n.id, []]));
+		for (const e of liveEdges) { outDeg.set(e.from, outDeg.get(e.from) + 1); inDeg.set(e.to, inDeg.get(e.to) + 1); if (!e.self) adj.get(e.from).push(e.to); }
+		for (const l of adj.values()) l.sort();
+
+		// Recursion cycles (mutual recursion = SCC>1; direct recursion = self edge).
+		const comps = tarjanSCC(allNodes.map((n) => n.id), adj);
+		const compOf = new Map();
+		comps.forEach((c, ci) => c.forEach((p) => compOf.set(p, ci)));
+		const cyclic = new Set();
+		const cycles = [];
+		for (const c of comps) if (c.length > 1) { for (const p of c) cyclic.add(p); cycles.push({ members: c.slice().sort() }); }
+		for (const e of liveEdges) { if (e.self) cyclic.add(e.from); if (compOf.get(e.from) === compOf.get(e.to) && cyclic.has(e.from)) e.inCycle = true; }
+		for (const e of liveEdges) if (e.self && !cycles.some((c) => c.members.includes(e.from))) cycles.push({ members: [e.from], self: true });
+
+		const nodes = allNodes.map((n) => {
+			const i = inDeg.get(n.id), o = outDeg.get(n.id);
+			let role = "normal";
+			if (cyclic.has(n.id)) role = "cycle";
+			else if (n.kind === "module" || i === 0) role = (o > 0 ? "entry" : "orphan");
+			else if (o === 0) role = "leaf";
+			return { ...n, inDeg: i, outDeg: o, role };
+		}).sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : (a.line || 0) - (b.line || 0)));
+
+		let maxFanOut = 0; for (const o of outDeg.values()) if (o > maxFanOut) maxFanOut = o;
+		const fileCount = typeof opts.files === "number" ? opts.files : new Set(allNodes.map((n) => n.file)).size;
+		const metrics = {
+			files: fileCount,
+			functions: allNodes.filter((n) => n.kind !== "module").length,
+			nodes: nodes.length,
+			calls: liveEdges.length,
+			parallelCalls: liveEdges.filter((e) => e.parallel).length,
+			recursive: cycles.length,
+			maxFanOut,
+		};
+		return { root: rootName, generatedAt, kind: "callgraph", provider: opts.provider || "heuristic", nodes, edges: liveEdges, cycles, metrics, truncated: !!opts.truncated };
+	}
+
 	return {
 		parseRefs,
 		resolveRef,
 		normalizePath,
 		buildModel,
+		buildCallGraph,
+		finalizeCallGraph,
 		// small helpers exposed for consumers/tests (e.g. the Node walker reuses the
 		// noise list so there is a single source of truth for what to skip)
 		baseName,

@@ -1,7 +1,6 @@
-// _load.js — the ONE shared repo loader for the Node automation layer. Both
-// scripts/repo-analyze.js (CLI) and scripts/api-server.js (HTTP) require this so the
-// analysis path is never forked. Built-ins only (fs, path, os, child_process, https,
-// url) — ZERO npm dependencies.
+// _load.js — the ONE shared repo loader for the Node automation layer, required by
+// scripts/repo-analyze.js (CLI) so the analysis path is never forked. Built-ins only
+// (fs, path, os, child_process, https, url) — ZERO npm dependencies.
 //
 // It turns a local folder OR a git/GitHub URL into the exact inputs js/engine.js
 // expects, then runs RV.engine.buildModel — so the CLI, the server and the browser
@@ -93,7 +92,9 @@ async function loadLocal(absRoot, opts) {
 	if (pkg) { try { packageJson = JSON.parse(await fs.promises.readFile(pkg._abs, "utf8")); } catch {} }
 
 	const readText = async (entry) => fs.promises.readFile(entry._abs, "utf8");
-	return { rootName, entries, readText, indexHtmlText, packageJson, cleanup: async () => {} };
+	// rootDir = the absolute folder on disk (lets language providers run their own
+	// compiler over the real files). Absent on the remote GitHub-API path.
+	return { rootName, entries, readText, indexHtmlText, packageJson, rootDir: absRoot, cleanup: async () => {} };
 }
 
 // ---- git clone (preferred) + GitHub trees API (fallback) -------------------
@@ -219,20 +220,69 @@ async function loadRepo(input, opts, onLog) {
 async function analyze(input, opts, onLog) {
 	opts = opts || {};
 	const loaded = await loadRepo(input, opts, onLog);
+	const generatedAt = opts.generatedAt || new Date().toISOString();
+	// Memoize reads so the module flow AND the call graph don't fetch each file twice
+	// (matters for the remote GitHub-API path).
+	const cache = new Map();
+	const cachedRead = async (entry) => {
+		const key = (entry && (entry._abs || entry._url || entry.path)) || JSON.stringify(entry);
+		if (cache.has(key)) return cache.get(key);
+		const t = await loaded.readText(entry);
+		cache.set(key, t);
+		return t;
+	};
 	try {
 		const model = await engine.buildModel({
 			rootName: loaded.rootName,
 			entries: loaded.entries,
-			readText: loaded.readText,
+			readText: cachedRead,
 			indexHtmlText: loaded.indexHtmlText,
 			packageJson: loaded.packageJson,
 			includeNoise: opts.includeNoise,
-			generatedAt: opts.generatedAt || new Date().toISOString(),
+			generatedAt,
 		});
-		return { model, rootName: loaded.rootName, entries: loaded.entries };
+		// The function-level "code flow" (callgraph): accurate language providers where
+		// available (Roslyn for C#, …), regex heuristic for everything else.
+		const callGraph = await buildCallGraphWithProviders(loaded, cachedRead, opts, generatedAt, onLog);
+		return { model, callGraph, rootName: loaded.rootName, entries: loaded.entries };
 	} finally {
 		try { await loaded.cleanup(); } catch { /* best-effort temp cleanup */ }
 	}
 }
 
-module.exports = { analyze, loadRepo, isGitUrl, looksRemote, parseGitHub, engine };
+// Build the call graph, delegating supported languages to accurate compiler-based
+// providers and merging their result with the heuristic for the rest. Any provider
+// failure (no SDK, build error, …) degrades silently to the pure heuristic.
+async function buildCallGraphWithProviders(loaded, readText, opts, generatedAt, onLog) {
+	const rx = /\.cs$/i;
+	const csFiles = loaded.entries.filter((e) => rx.test(e.path));
+	let csharp = null;
+	if (csFiles.length && loaded.rootDir) {
+		try {
+			const provider = require("./providers/csharp.js");
+			if (await provider.available()) csharp = await provider.analyze(loaded.rootDir, loaded.rootName, onLog);
+		} catch (err) {
+			if (onLog) onLog(`C# provider unavailable (${err.message}); using the heuristic for C#.`);
+		}
+	}
+
+	if (!csharp) {
+		// No provider applicable → pure heuristic over everything.
+		return engine.buildCallGraph({ rootName: loaded.rootName, entries: loaded.entries, readText, includeNoise: opts.includeNoise, generatedAt });
+	}
+
+	// Merge: heuristic over NON-C# files + Roslyn over C#, then one shared finalize.
+	const nonCs = loaded.entries.filter((e) => !rx.test(e.path));
+	const heur = await engine.buildCallGraph({ rootName: loaded.rootName, entries: nonCs, readText, includeNoise: opts.includeNoise, generatedAt });
+	const stripNode = (n) => ({ id: n.id, file: n.file, name: n.name, kind: n.kind, line: n.line });
+	const stripEdge = (e) => ({ from: e.from, to: e.to, self: e.self, parallel: e.parallel, via: e.via });
+	const nodes = [...heur.nodes.map(stripNode), ...csharp.functions];
+	const edges = [...heur.edges.map(stripEdge), ...csharp.calls];
+	const provider = heur.nodes.some((n) => n.kind !== "module") ? "mixed (roslyn + heuristic)" : "roslyn";
+	return engine.finalizeCallGraph(loaded.rootName, nodes, edges, {
+		generatedAt, provider,
+		files: (heur.metrics.files || 0) + (csharp.files || 0),
+	});
+}
+
+module.exports = { analyze, loadRepo, isGitUrl, looksRemote, parseGitHub, engine, buildCallGraphWithProviders };

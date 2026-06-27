@@ -5,7 +5,7 @@
 //
 //   buildMarkdownMap(model, meta) -> string
 //
-// The browser glue (js/flowexport.js) and the Node CLI/HTTP API all call THIS — the
+// The browser glue (js/flowexport.js) and the Node CLI both call THIS — the
 // Markdown/Mermaid generation is never duplicated.
 (function (root, factory) {
 	const api = factory();
@@ -61,10 +61,11 @@
 	// ---- the builder ------------------------------------------------------
 
 	/**
-	 * @param {object} model  AnalysisModel from engine.buildModel
-	 * @param {object} [meta] { title?, generatedAt?, commands?:{engine,cli,http} }
+	 * @param {object} model  AnalysisModel from engine.buildModel (module import flow)
+	 * @param {object} [meta] { title?, generatedAt? }
+	 * @param {object} [callGraph] optional engine.buildCallGraph result (function code flow)
 	 */
-	function buildMarkdownMap(model, meta) {
+	function buildMarkdownMap(model, meta, callGraph) {
 		meta = meta || {};
 		const root = model.root || "repository";
 		const generatedAt = meta.generatedAt || model.generatedAt || "";
@@ -92,8 +93,13 @@
 			""
 		);
 
+		// 1.5) Function call flow (code flow) — the headline when available -----
+		if (callGraph && callGraph.nodes && callGraph.nodes.length) {
+			pushCallFlowSection(out, callGraph, root);
+		}
+
 		// 2) Mermaid diagram -------------------------------------------------
-		out.push(`## Architecture flow diagram`, "");
+		out.push(`## Module import flow`, "");
 		out.push(buildMermaid(model, byPath), "");
 
 		// 3) Entry points (START) -------------------------------------------
@@ -224,6 +230,92 @@
 			else lines.push(`  ${a} --> ${b}`);
 		}
 
+		lines.push("```");
+		return lines.join("\n");
+	}
+
+	// ---- function call flow (code flow) ----------------------------------
+
+	/** `file::name#line` (or `file::<module>`) → a compact display label. */
+	function callNodeLabel(id, root) {
+		const i = id.indexOf("::");
+		if (i === -1) return id;
+		const file = relPath(id.slice(0, i), root);
+		const rest = id.slice(i + 2).replace(/#\d+(?::\d+)?$/, ""); // drop #line or #line:col
+		return `${file}::${rest === "<module>" ? "(module)" : rest}`;
+	}
+
+	function pushCallFlowSection(out, cg, root) {
+		const cm = cg.metrics || {};
+		const connected = new Set();
+		for (const e of cg.edges || []) { connected.add(e.from); connected.add(e.to); }
+		const prov = cg.provider || "heuristic";
+		const accurate = prov !== "heuristic";
+		out.push(`## Function call flow (code flow)`, "");
+		out.push(
+			`The actual **code flow** — functions as nodes, **arrows = calls** (who points to whom). ` +
+			`Solid = sequential (**series**); dashed **parallel** = concurrent; dashed **recurses** = recursion` +
+			(accurate ? `; dashed **virtual** = a virtual/interface dispatch target; dashed **event** = an event handler` : "") +
+			`. Analyzer: **${prov}**` +
+			(accurate ? ` (compiler-accurate — follows overrides, interface implementations and events).` : ` (best-effort regex; install the matching SDK for compiler-accurate dispatch).`) +
+			`  \n**${connected.size}** connected of **${cm.functions}** function(s) across ` +
+			`**${cm.files}** file(s), **${cm.calls}** call edge(s) (${cm.parallelCalls} parallel), ` +
+			`**${cm.recursive}** recursive group(s), max fan-out **${cm.maxFanOut}**.` +
+			(cg.truncated ? `  \n\n> ⚠ Function list truncated to the analysis cap.` : ""),
+			""
+		);
+		out.push(buildCallMermaid(cg, root), "");
+		if (cg.cycles && cg.cycles.length) {
+			out.push(`**Recursive functions:**`, "");
+			for (const c of cg.cycles) {
+				const names = c.members.map((id) => code(callNodeLabel(id, root)));
+				out.push(`- ${c.self ? "↻ (self) " : ""}${names.join(c.self ? "" : " ↔ ")}`);
+			}
+			out.push("");
+		}
+	}
+
+	function buildCallMermaid(cg, root) {
+		const idFor = makeIdFactory();
+		// Render only CONNECTED functions (those in at least one call) — the flow itself.
+		const connected = new Set();
+		for (const e of cg.edges || []) { connected.add(e.from); connected.add(e.to); }
+		let nodes = (cg.nodes || []).filter((n) => connected.has(n.id));
+		let note = "";
+		if (nodes.length > MERMAID_NODE_CAP) {
+			const score = (n) => (n.role === "cycle" ? 5 : 0) + (n.kind === "module" ? 3 : 0) + (n.inDeg + n.outDeg) / 1000;
+			nodes = nodes.slice().sort((a, b) => score(b) - score(a) || (a.id < b.id ? -1 : 1)).slice(0, MERMAID_NODE_CAP);
+			note = `%% diagram truncated to ${MERMAID_NODE_CAP} of ${cg.nodes.length} functions — full picture via the CLI/JSON`;
+		}
+		const renderSet = new Set(nodes.map((n) => n.id));
+
+		// One subgraph per file (so module boundaries stay visible).
+		const groups = new Map();
+		for (const n of nodes) { const g = relPath(n.file, root); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(n); }
+
+		const lines = ["```mermaid", "flowchart LR"];
+		if (note) lines.push("  " + note);
+		lines.push("  classDef entry fill:#1f6feb,stroke:#fff,color:#fff;");
+		lines.push("  classDef leaf fill:#2ea043,stroke:#fff,color:#fff;");
+		lines.push("  classDef cycle fill:#e0556b,stroke:#fff,color:#fff;");
+		lines.push("  classDef module fill:#8957e5,stroke:#fff,color:#fff;");
+		for (const g of [...groups.keys()].sort()) {
+			lines.push(`  subgraph ${idFor("__f__/" + g)}["${label(g)}"]`);
+			for (const n of groups.get(g).sort((a, b) => a.line - b.line)) {
+				const cls = n.role === "cycle" ? ":::cycle" : n.kind === "module" ? ":::module" : n.role === "entry" ? ":::entry" : n.role === "leaf" ? ":::leaf" : "";
+				lines.push(`    ${idFor(n.id)}["${label(n.kind === "module" ? "(module)" : n.name)}"]${cls}`);
+			}
+			lines.push("  end");
+		}
+		for (const e of cg.edges || []) {
+			if (!renderSet.has(e.from) || !renderSet.has(e.to)) continue;
+			const a = idFor(e.from), b = idFor(e.to);
+			if (e.inCycle || e.self) lines.push(`  ${a} -. "recurses" .-> ${b}`);
+			else if (e.parallel) lines.push(`  ${a} -. "parallel" .-> ${b}`);
+			else if (e.via === "dispatch") lines.push(`  ${a} -. "virtual" .-> ${b}`); // virtual/interface dispatch target
+			else if (e.via === "event") lines.push(`  ${a} -. "event" .-> ${b}`);
+			else lines.push(`  ${a} --> ${b}`);
+		}
 		lines.push("```");
 		return lines.join("\n");
 	}
